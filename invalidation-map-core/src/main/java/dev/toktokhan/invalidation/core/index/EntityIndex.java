@@ -18,7 +18,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 엔티티에 대해 알아야 하는 사실을 모아 둡니다. 변경자 판정, 한 단계 연관, 테이블명 역매핑입니다.
+ * 엔티티에 대해 알아야 하는 사실을 모아 둡니다. 변경자 판정, 한 단계 연관, 필드별 연관 조회,
+ * 테이블명 역매핑, JPQL 엔티티명 역색인입니다.
  */
 public final class EntityIndex {
 
@@ -346,10 +347,18 @@ public final class EntityIndex {
      * <p>기본은 단순 클래스명이지만 {@code @Entity(name = ...)} 로 바꿀 수 있습니다. 이
      * 어노테이션 값이 있어도 단순 클래스명 등록은 그대로 남겨 둡니다 — 두 키가 같은
      * 엔티티를 가리키므로 해가 없고, 지운다고 다른 엔티티와 충돌이 줄어들지도 않습니다.
+     *
+     * <p>{@link #buildTableIndex} 와 마찬가지로 엔티티 이름을 정렬해서 훑습니다. JPA 는
+     * 엔티티명 유일성을 요구하므로 실제로는 두 엔티티가 같은 JPQL 이름을 두고 경쟁할 일이
+     * 없어 결과가 갈리지 않지만, 두 색인 구축 메서드의 순회 순서 의존성을 비대칭으로
+     * 남겨 두지 않기 위해 맞춥니다.
      */
     private Map<String, String> buildNameIndex() {
+        List<String> sortedEntities = new ArrayList<>(entities);
+        Collections.sort(sortedEntities);
+
         Map<String, String> index = new LinkedHashMap<>();
-        for (String entity : entities) {
+        for (String entity : sortedEntities) {
             index.putIfAbsent(MethodRefs.simpleNameOf(entity), entity);
             classes.facts(entity)
                 .map(facts -> facts.annotation(ENTITY))

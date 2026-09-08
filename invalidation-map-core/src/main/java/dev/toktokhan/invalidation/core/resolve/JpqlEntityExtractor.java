@@ -43,11 +43,21 @@ public final class JpqlEntityExtractor {
             String keyword = tokens.get(i).toLowerCase(Locale.ROOT);
             boolean isTarget = keyword.equals("from") || keyword.equals("update")
                 || keyword.equals("join");
-            if (!isTarget || i + 1 >= tokens.size()) {
+            if (!isTarget) {
                 continue;
             }
-            String target = tokens.get(i + 1);
-            String alias = aliasAfter(tokens, i + 2);
+            int targetIndex = i + 1;
+            if (keyword.equals("join") && targetIndex < tokens.size()
+                && tokens.get(targetIndex).equalsIgnoreCase("fetch")) {
+                // JOIN FETCH t.legs l — FETCH 는 즉시 로딩 힌트일 뿐 조인 대상이 아닙니다.
+                // 건너뛰지 않으면 target 이 "fetch" 가 되어 조인 대상을 통째로 놓칩니다.
+                targetIndex++;
+            }
+            if (targetIndex >= tokens.size()) {
+                continue;
+            }
+            String target = tokens.get(targetIndex);
+            String alias = aliasAfter(tokens, targetIndex + 1);
 
             if (target.contains(".")) {
                 // JOIN t.legs l — 별칭 표에서 소유 엔티티를 찾아 필드 타입으로 해석합니다.
