@@ -35,11 +35,11 @@ public interface ProgramModel {
      * 지원하려고 실제로 빈 팩토리에도 등록되는 경우가 있음을 확인했지만(spring-data-commons
      * 4.0.5, 프래그먼트 인터페이스 이름 규칙과 리포지토리 인터페이스 이름 규칙(레거시) 둘 다),
      * 이는 구현 세부사항이지 계약이 아닙니다. {@code RepositoryFactoryBeanSupport} 의
-     * {@code setRepositoryFragments}/{@code setRepositoryFragmentsFunction}(spring-data-commons
-     * 3.3.5, 4.0.5 양쪽 모두에 있는 API — 4.0.5 는 여기에 {@code RepositoryFragmentsContributor}
-     * 를 추가로 지원합니다)처럼 프로그램 방식으로 조립되는 프래그먼트는 클래스패스 이름 규칙
-     * 탐지 자체를 거치지 않으므로 빈 등록도 거치지 않습니다. 빈 팩토리만 보면 이런 경로를
-     * 놓칠 수 있습니다.
+     * {@code setRepositoryFragments}(spring-data-commons 3.3.5, 4.0.5 양쪽 모두에 있습니다)처럼
+     * 프로그램 방식으로 조립되는 프래그먼트는 클래스패스 이름 규칙 탐지 자체를 거치지 않으므로
+     * 빈 등록도 거치지 않습니다. 4.0.5 는 같은 목적의 API 로
+     * {@code setRepositoryFragmentsFunction} 과 {@code RepositoryFragmentsContributor} 를
+     * 추가로 제공하지만, 둘 다 4.0.5 전용입니다. 빈 팩토리만 보면 이런 경로를 놓칠 수 있습니다.
      */
     Set<String> implementationsOf(String interfaceInternalName);
 
