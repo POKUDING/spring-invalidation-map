@@ -1,6 +1,7 @@
 package dev.toktokhan.invalidation.springboot.app;
 
 import jakarta.persistence.CascadeType;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -26,12 +27,16 @@ public class Note {
     @JoinColumn(name = "note_id")
     private List<NoteTag> tags = new ArrayList<>();
 
+    @Embedded
+    private NoteMetadata metadata;
+
     protected Note() {
         // JPA
     }
 
     public Note(String title) {
         this.title = title;
+        this.metadata = new NoteMetadata("system");
     }
 
     public void rename(String title) {
@@ -48,5 +53,9 @@ public class Note {
 
     public List<NoteTag> getTags() {
         return tags;
+    }
+
+    public NoteMetadata getMetadata() {
+        return metadata;
     }
 }

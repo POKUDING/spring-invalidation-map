@@ -10,11 +10,14 @@ import dev.toktokhan.invalidation.springboot.app.NoteController;
 import dev.toktokhan.invalidation.springboot.app.NoteCreatedEvent;
 import dev.toktokhan.invalidation.springboot.app.NoteEventListener;
 import dev.toktokhan.invalidation.springboot.app.NoteJpaRepository;
+import dev.toktokhan.invalidation.springboot.app.NoteMetadata;
 import dev.toktokhan.invalidation.springboot.app.NotePort;
 import dev.toktokhan.invalidation.springboot.app.NotePortAdapter;
 import dev.toktokhan.invalidation.springboot.app.NoteRepositoryCustom;
 import dev.toktokhan.invalidation.springboot.app.NoteRepositoryCustomImpl;
 import dev.toktokhan.invalidation.springboot.app.NoteTag;
+import dev.toktokhan.invalidation.springboot.app.SlotInstance;
+import dev.toktokhan.invalidation.springboot.app.SlotInstanceRepositoryCustom;
 import dev.toktokhan.invalidation.springboot.app.TestApplication;
 import jakarta.persistence.EntityManagerFactory;
 import java.lang.reflect.Method;
@@ -90,6 +93,20 @@ class SpringProgramModelTest {
             .contains(MethodRefs.internalNameOf(Note.class));
     }
 
+    /**
+     * pirl-spring 이 실제로 쓰는 리포지토리 인터페이스 이름 규칙(레거시:
+     * {@code SlotInstanceRepositoryImpl implements SlotInstanceRepositoryCustom}, 리포지토리
+     * 인터페이스는 {@link dev.toktokhan.invalidation.springboot.app.SlotInstanceRepository})
+     * 입니다. 이 규칙에서는 {@code getFragments()} 의 signatureContributor 가 구현체 클래스를
+     * 돌려주므로, {@code buildRepositoryIndex} 가 리포지토리 인터페이스의 직접 선언 인터페이스도
+     * 훑어야만 통과합니다(리뷰 라운드 1, I1).
+     */
+    @Test
+    void entityFor_legacyNamedFragmentInterface_resolvesEntity() {
+        assertThat(model.entityFor(MethodRefs.internalNameOf(SlotInstanceRepositoryCustom.class)))
+            .contains(MethodRefs.internalNameOf(SlotInstance.class));
+    }
+
     @Test
     void implementationsOf_beanAdapter_findsBean() {
         assertThat(model.implementationsOf(MethodRefs.internalNameOf(NotePort.class)))
@@ -146,7 +163,8 @@ class SpringProgramModelTest {
 
         assertThat(entities).contains(
             MethodRefs.internalNameOf(Note.class),
-            MethodRefs.internalNameOf(NoteTag.class));
+            MethodRefs.internalNameOf(NoteTag.class),
+            MethodRefs.internalNameOf(NoteMetadata.class));
     }
 
     @Test
