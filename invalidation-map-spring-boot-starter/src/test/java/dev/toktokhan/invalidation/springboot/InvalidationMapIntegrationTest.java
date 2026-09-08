@@ -134,6 +134,39 @@ class InvalidationMapIntegrationTest {
         assertThat(toList(unresolvedExtension.get("unresolved"))).isNotEmpty();
     }
 
+    /**
+     * F1(Critical) 재발 방지 테스트입니다. 레거시 프래그먼트 이름 규칙({@link SlotInstance}
+     * 계열, pirl-spring 의 {@code SlotInstanceRepositoryImpl})의 네이티브 SQL 쓰기와, 이미
+     * 해결된 다른 읽기({@link AlphaEntity})가 같은 엔드포인트에 함께 있을 때, 프래그먼트
+     * 쓰기가 조용히 사라지지 않고 {@code writes} 에 실제로 실리는지 확인합니다.
+     *
+     * <p>리뷰 라운드 1 에서는 {@code SpringProgramModel.implementationsOf} 가 프래그먼트
+     * 구현체를 프래그먼트 계약 이름으로만 색인해, 호출부 정적 타입이 리포지토리 인터페이스인
+     * 이 경우를 찾지 못했습니다. 그 결과 {@code writes} 키도 {@code unresolved} 언급도 없이
+     * {@code SlotInstance} 쓰기가 완전히 사라지고, {@code AlphaEntity} 읽기만 있어 엔드포인트
+     * 전체가 "완전히 해결됨"으로 보고됐습니다 — {@code fail-on-unresolved} 가드도 잡지
+     * 못하는 조용한 누락이었습니다.
+     */
+    @Test
+    void apiDocs_legacyFragmentWriteWithResolvedRead_isNotSilentlyDropped() throws Exception {
+        JsonNode extension = apiDocs(port).at("/paths/~1legacy-fragment-mix~1{id}/put/x-entities");
+
+        assertThat(extension.isMissingNode()).isFalse();
+        assertThat(toList(extension.path("writes"))).contains(SlotInstance.class.getName());
+        assertThat(toList(extension.path("reads"))).contains(AlphaEntity.class.getName());
+    }
+
+    @Test
+    void apiDocs_multiPathHandler_sharesSameExtension() throws Exception {
+        JsonNode docs = apiDocs(port);
+        JsonNode multiA = docs.at("/paths/~1notes~1multi-a/get/x-entities");
+        JsonNode multiB = docs.at("/paths/~1notes~1multi-b/get/x-entities");
+
+        assertThat(multiA.isMissingNode()).isFalse();
+        assertThat(toList(multiA.path("reads"))).contains(NOTE_FQCN);
+        assertThat(multiA).isEqualTo(multiB);
+    }
+
     private static JsonNode apiDocs(int port) throws Exception {
         HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/v3/api-docs"))
             .GET()

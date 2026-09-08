@@ -60,6 +60,16 @@ public class NoteController {
         return "pong";
     }
 
+    /**
+     * 핸들러 하나가 경로 두 개에 매핑됩니다. {@code InvalidationMap} 이 경로가 아니라 핸들러
+     * 메서드로 키를 잡으므로({@link dev.toktokhan.invalidation.core.InvalidationMap} 참고),
+     * 두 경로 모두 완전히 같은 {@code x-entities} 를 받아야 합니다.
+     */
+    @GetMapping({"/multi-a", "/multi-b"})
+    public List<Note> multi() {
+        return noteService.findAll();
+    }
+
     public record NoteRequest(String title) {
     }
 }

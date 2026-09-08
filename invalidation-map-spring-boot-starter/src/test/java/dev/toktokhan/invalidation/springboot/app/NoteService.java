@@ -41,31 +41,20 @@ public class NoteService {
     /**
      * {@link NoteRepositoryCustom} 프래그먼트를 거쳐 네이티브 UPSERT 를 실행합니다.
      *
-     * <p>{@code notes} 를 {@link NoteRepositoryCustom} 타입 지역 변수에 대입한 뒤 그 변수로
-     * 호출합니다. {@code SpringProgramModel.implementationsOf} 는 프래그먼트 구현체를
-     * 리포지토리 인터페이스가 아니라 프래그먼트 인터페이스 이름으로만 색인합니다(직접 확인:
-     * {@code implementationsOf(NoteJpaRepository)} 는 빈 집합, {@code
-     * implementationsOf(NoteRepositoryCustom)} 은 {@code [NoteJpaRepository,
-     * NoteRepositoryCustomImpl]}). 호출 지점의 바이트코드 {@code invokeinterface} owner 는
-     * 호출식의 정적 타입 그대로 남으므로(직접 확인: {@code javap} 로 {@code notes.upsert(...)}
-     * 를 부르면 owner 가 {@code NoteJpaRepository} 로 찍힘), {@code notes.upsert(...)} 로
-     * 그대로 부르면 워커가 {@link NoteRepositoryCustomImpl} 로 내려가지 못해 {@code Note}
-     * 쓰기를 찾지 못합니다.
-     *
-     * <p>{@link NoteRepositoryCustom} 을 필드로 직접 주입받지 않은 이유는 Spring Data 가
-     * {@code NoteRepositoryCustomImpl} 자체도 별도 빈({@code noteRepositoryCustomImpl})으로
-     * 등록해서입니다(직접 확인: {@code NoteRepositoryCustom} 타입으로 주입을 시도하면
-     * {@code noteRepositoryCustomImpl} 과 {@code noteJpaRepository} 두 후보가 걸려
-     * {@code NoUniqueBeanDefinitionException} 이 납니다). {@code notes}({@link
-     * NoteJpaRepository} 타입, 후보가 하나뿐이라 모호하지 않음)를 그대로 주입받고, 호출
-     * 지점에서만 지역 변수로 타입을 좁혀 정적 타입만 바꿉니다.
+     * <p>{@code notes}({@link NoteJpaRepository} 타입)로 그대로 호출합니다. 예전에는 호출
+     * 지점의 정적 타입을 {@link NoteRepositoryCustom} 으로 좁히는 지역 변수를 거쳤는데,
+     * 이는 실제 소비자 코드가 쓰지 않는 형태였고 {@code SpringProgramModel.implementationsOf}
+     * 가 리포지토리 인터페이스 이름으로는 프래그먼트 구현체를 찾지 못하는 결함을 우회했을
+     * 뿐입니다(리뷰로 지적됨). {@code SpringProgramModel.buildRepositoryIndex} 가 프래그먼트
+     * 구현체를 {@code entityFor} 와 같은 이름 집합(리포지토리 인터페이스 포함)으로 색인하도록
+     * 고쳐, 이제 {@code notes.upsert(...)} 그대로도 워커가 {@link NoteRepositoryCustomImpl}
+     * 본문까지 내려갑니다.
      *
      * <p>{@code upsert} 는 Spring Data 관용 접두어(save, delete, update 등)와도 겹치지 않아
      * 리포지토리 인덱스가 방향을 판정하지 못하므로, 워커가 프래그먼트 구현체 본문까지
      * 내려가 네이티브 SQL 에서 대상 테이블을 읽어야만 {@code Note} 쓰기를 찾습니다.
      */
     public void upsert(Long id, String title) {
-        NoteRepositoryCustom fragment = notes;
-        fragment.upsert(id, title);
+        notes.upsert(id, title);
     }
 }
