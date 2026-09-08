@@ -30,9 +30,13 @@ public interface ProgramModel {
     /**
      * 인터페이스를 구현하는 타입입니다.
      *
-     * <p>런타임 구현은 두 곳에서 찾아야 합니다. 빈으로 등록된 구현체와, Spring Data 가 내부에서
-     * 만드는 리포지토리 프래그먼트 구현체입니다. 프래그먼트는 빈이 아니므로 빈 팩토리만 보면
-     * 놓칩니다.
+     * <p>런타임 구현은 두 곳에서 찾아야 합니다. 빈으로 등록된 구현체와, Spring Data 리포지토리
+     * 프래그먼트 색인입니다. 클래스패스 이름 규칙으로 찾은 프래그먼트 구현체가 DI 를
+     * 지원하려고 실제로 빈 팩토리에도 등록되는 경우가 있음을 확인했지만(spring-data-commons
+     * 4.0.5, 프래그먼트 인터페이스 이름 규칙과 리포지토리 인터페이스 이름 규칙(레거시) 둘 다),
+     * 이는 구현 세부사항이지 계약이 아닙니다. {@code RepositoryFragmentsContributor} 로
+     * 프로그램 방식으로 조립되는 프래그먼트처럼 빈 등록을 거치지 않는 경로도 있어, 빈
+     * 팩토리만 보면 놓칠 수 있습니다.
      */
     Set<String> implementationsOf(String interfaceInternalName);
 
