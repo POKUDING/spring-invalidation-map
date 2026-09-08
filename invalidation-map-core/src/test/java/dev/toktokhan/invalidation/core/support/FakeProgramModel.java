@@ -10,6 +10,7 @@ import java.io.UncheckedIOException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -87,7 +88,8 @@ public final class FakeProgramModel implements ProgramModel {
 
     @Override
     public Set<String> entities() {
-        return Set.copyOf(entities);
+        // Set.copyOf 는 JVM 기동마다 순회 순서가 달라집니다. 삽입 순서를 보존합니다.
+        return Collections.unmodifiableSet(new LinkedHashSet<>(entities));
     }
 
     public MethodRef ref(Class<?> type, String methodName, Class<?>... parameterTypes) {

@@ -70,7 +70,7 @@ class ClassRepositoryTest {
     }
 
     @Test
-    void resolveMethod_interfaceMethodWithoutBody_findsNothingOnInterface() {
+    void methodFacts_interfaceMethodWithoutBody_returnsFactsWithEmptyCalls() {
         MethodRef onInterface = new MethodRef(MethodRefs.internalNameOf(Port.class), "run", "()V");
         assertThat(classes.methodFacts(onInterface))
             .get()
