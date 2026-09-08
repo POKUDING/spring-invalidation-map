@@ -12,7 +12,10 @@ public final class Bytes {
 
     public static byte[] of(Class<?> type) {
         String resource = type.getName().replace('.', '/') + ".class";
-        try (InputStream in = type.getClassLoader().getResourceAsStream(resource)) {
+        // 부트스트랩 클래스로더가 적재한 타입(예: String.class)은 getClassLoader() 가 null 이므로
+        // 이 도우미 자신의 클래스로더로 폴백합니다.
+        ClassLoader loader = type.getClassLoader() != null ? type.getClassLoader() : Bytes.class.getClassLoader();
+        try (InputStream in = loader.getResourceAsStream(resource)) {
             if (in == null) {
                 throw new IllegalStateException("클래스 파일을 찾을 수 없습니다: " + resource);
             }
