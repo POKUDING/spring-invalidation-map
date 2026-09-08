@@ -4922,6 +4922,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -5046,6 +5048,11 @@ public final class SpringProgramModel implements ProgramModel {
         }
     }
 
+    /**
+     * {@code getHandlerMethods()} 가 돌려주는 맵의 순회 순서는 보장되지 않습니다. 그대로 담으면
+     * 엔드포인트 목록 순서가 JVM 을 다시 띄울 때마다 달라지고, 그 순서에 얹히는 진단 출력과
+     * 미해결 목록 순서도 함께 흔들립니다. HTTP 메서드·경로·핸들러 순으로 정렬해 고정합니다.
+     */
     private List<Endpoint> buildEndpoints() {
         List<Endpoint> found = new ArrayList<>();
         handlerMapping.getHandlerMethods().forEach((info, handlerMethod) -> {
@@ -5053,6 +5060,11 @@ public final class SpringProgramModel implements ProgramModel {
             MethodRef handler = MethodRefs.of(userClass, handlerMethod.getMethod());
             found.add(new Endpoint(httpMethodOf(info), pathOf(info), handler));
         });
+        found.sort(Comparator.comparing(Endpoint::httpMethod)
+            .thenComparing(Endpoint::path)
+            .thenComparing(endpoint -> endpoint.handler().owner())
+            .thenComparing(endpoint -> endpoint.handler().name())
+            .thenComparing(endpoint -> endpoint.handler().descriptor()));
         return List.copyOf(found);
     }
 
