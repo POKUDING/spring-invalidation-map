@@ -155,28 +155,31 @@ public final class EntityIndex {
             return copyOfOrEmpty(inheritedMutators);
         }
         ClassFacts facts = maybeFacts.get();
-        // 엔티티이거나 @MappedSuperclass 여야 이 클래스 자신의 변경자를 새로 셉니다. 상태를
-        // 갖지 않는 클래스라도 상속받은 변경자 호출은 그대로 전달합니다.
-        boolean holdsState = isEntity(declaringClass) || facts.hasAnnotation(MAPPED_SUPERCLASS);
-        if (!holdsState) {
-            return copyOfOrEmpty(inheritedMutators);
-        }
-
         List<MethodFacts> candidates = facts.methods().stream()
             .filter(method -> !method.isStatic())
             .filter(method -> !method.isConstructor())
             .toList();
 
         Set<String> mutators = new LinkedHashSet<>(inheritedMutators);
-        for (MethodFacts method : candidates) {
-            if (!method.writtenOwnFields().isEmpty()) {
-                mutators.add(method.ref().name() + method.ref().descriptor());
+
+        // 엔티티이거나 @MappedSuperclass 여야 이 클래스 자신의 필드 쓰기를 변경자로 셉니다.
+        // 상태를 갖지 않는 클래스(어노테이션 없는 중간 클래스 등)의 필드는 영속되지
+        // 않으므로 그 클래스의 PUTFIELD 는 세지 않습니다.
+        boolean holdsState = isEntity(declaringClass) || facts.hasAnnotation(MAPPED_SUPERCLASS);
+        if (holdsState) {
+            for (MethodFacts method : candidates) {
+                if (!method.writtenOwnFields().isEmpty()) {
+                    mutators.add(method.ref().name() + method.ref().descriptor());
+                }
             }
         }
 
-        // 다른 변경자를 호출하는 메서드도 변경자입니다. 대조 집합에 상속받은 변경자도 들어
-        // 있으므로, 상위 타입에 선언된 변경자를 호출하는 이 클래스의 메서드도 잡힙니다.
-        // 더 늘지 않을 때까지 반복합니다.
+        // 다른 변경자를 호출하는 메서드도 변경자입니다. holdsState 와 무관하게 항상
+        // 돌립니다 — 상태를 갖지 않는 클래스라도 그 클래스가 선언한 메서드가 상속받은
+        // 변경자를 호출할 수 있고(예: @MappedSuperclass 와 @Entity 사이에 낀 평범한
+        // 추상 클래스가 상위 타입의 변경자를 부르는 메서드를 선언하는 경우), 대조 집합에
+        // 상속받은 변경자가 이미 들어 있으므로 이 호출도 잡아야 합니다. 더 늘지 않을
+        // 때까지 반복합니다.
         boolean changed = true;
         while (changed) {
             changed = false;
