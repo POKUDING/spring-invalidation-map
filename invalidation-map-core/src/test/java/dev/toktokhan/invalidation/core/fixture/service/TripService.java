@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class TripService {
 
     private TripPort port;
+    private WideTripPort widePort;
     private ApplicationEventPublisher publisher;
     private TransactionalWorker transactionalWorker;
 
@@ -106,5 +107,16 @@ public class TripService {
      */
     public void callTransactionalWorker(String title) {
         transactionalWorker.doWork(title);
+    }
+
+    /**
+     * {@link WideTripPort#close()} 를 부릅니다. 테스트 배선에서 {@link TripPortAdapter} 가
+     * {@link WideTripPort} 의 구현체로도 등록되지만, {@link TripPortAdapter} 에는
+     * {@code close()} 가 없습니다. 그 후보가 존재하지 않는 메서드라는 이유로 이 호출
+     * 전체가 "본문을 읽을 수 없습니다" 로 보고되면 안 됩니다 — {@code WideTripPort.close()}
+     * 자신(추상 선언)은 문제없이 resolve 되기 때문입니다.
+     */
+    public void closeWidely() {
+        widePort.close();
     }
 }

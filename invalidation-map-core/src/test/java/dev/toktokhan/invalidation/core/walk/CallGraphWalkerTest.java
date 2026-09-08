@@ -9,6 +9,7 @@ import dev.toktokhan.invalidation.core.fixture.service.AbstractTransactionalWork
 import dev.toktokhan.invalidation.core.fixture.service.TripPort;
 import dev.toktokhan.invalidation.core.fixture.service.TripPortAdapter;
 import dev.toktokhan.invalidation.core.fixture.service.TripService;
+import dev.toktokhan.invalidation.core.fixture.service.WideTripPort;
 import dev.toktokhan.invalidation.core.index.ClassRepository;
 import dev.toktokhan.invalidation.core.index.ListenerIndex;
 import dev.toktokhan.invalidation.core.support.FakeProgramModel;
@@ -24,6 +25,10 @@ class CallGraphWalkerTest {
 
     private final FakeProgramModel program = FakeProgramModel.create()
         .withImplementation(TripPort.class, TripPortAdapter.class)
+        // TripPortAdapter 는 WideTripPort 를 실제로 구현하지 않습니다(store 만 있고 close 는
+        // 없음). implementationsOf 가 과잉 등록한 후보를 워커가 안전하게 거르는지 확인하는
+        // 배선입니다 — walk_implementationMissingCalledMethod_doesNotReportUnresolved 참고.
+        .withImplementation(WideTripPort.class, TripPortAdapter.class)
         .withEventListener(TripEventListeners.class, "onTripEvent")
         .withEventListener(TripEventListeners.class, "onArchivedByClasses");
     private final ClassRepository classes = new ClassRepository(program);
@@ -146,6 +151,19 @@ class CallGraphWalkerTest {
         walker.walk(ref("mixedOrder"), visitor);
         MethodRef deepest = program.ref(TripPortAdapter.class, "deepest");
         assertThat(stateAt.get(deepest).inTransaction()).isTrue();
+    }
+
+    @Test
+    void walk_implementationMissingCalledMethod_doesNotReportUnresolved() {
+        // implementationsOf(WideTripPort) 가 돌려주는 TripPortAdapter 에는 close() 가
+        // 없습니다. 자연스러운 호출 대상(WideTripPort.close 자신, 추상 선언이라 문제없이
+        // resolve 됨)은 이미 있으므로, 존재하지 않는 후보 하나 때문에 전체가 미해결로
+        // 잡히면 안 됩니다. 이 단정이 실패하면 실제로 "본문을 읽을 수 없습니다:
+        // .../TripPortAdapter.close()..." 가 나옵니다 — SpringProgramModel 이 리포지토리
+        // 인터페이스 하나에 프래그먼트 구현체 여러 개를 걸 때 정확히 이 모양으로
+        // 재현됩니다(스타터의 apiDocs_resolvedTrue_isOmitted 참고).
+        WalkResult result = walker.walk(ref("closeWidely"), visitor);
+        assertThat(result.unresolved()).isEmpty();
     }
 
     @Test
