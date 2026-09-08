@@ -4,6 +4,12 @@ import java.util.ArrayList;
 import java.util.List;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+/**
+ * {@code invalidation-map} 프리픽스로 바인딩되는 스타터 설정입니다.
+ *
+ * <p>{@link InvalidationMapAutoConfiguration} 이 이 값을 읽어 {@link
+ * InvalidationMapOperationCustomizer} 의 분석 호출을 구성합니다.
+ */
 @ConfigurationProperties(prefix = "invalidation-map")
 public class InvalidationMapProperties {
 
@@ -13,6 +19,7 @@ public class InvalidationMapProperties {
     /** 호출 사슬을 따라 내려갈 패키지입니다. 비우면 @SpringBootApplication 의 패키지를 씁니다. */
     private List<String> basePackages = new ArrayList<>();
 
+    /** 스펙에 엔티티를 어떤 이름으로 실을지 정합니다. 기본값은 패키지를 포함한 이름입니다. */
     private EntityNaming entityNaming = EntityNaming.FQCN;
 
     /** 엔드포인트 하나가 방문할 수 있는 최대 메서드 수입니다. */

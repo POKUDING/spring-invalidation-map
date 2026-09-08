@@ -194,6 +194,29 @@ public final class SpringProgramModel implements ProgramModel {
      * 방식으로 조립된 프래그먼트처럼 빈 등록을 거치지 않는 경로도 있습니다. 이 색인은 빈
      * 팩토리가 못 찾는 경우를 대비한 별도의, 항상 성립하는 경로입니다.
      *
+     * <p><b>{@code byFragment}(프래그먼트 구현체 색인)는 {@code byRepository}(엔티티 대응
+     * 색인)와 정확히 같은 이름 집합을 키로 씁니다.</b> 처음엔 프래그먼트 계약 이름
+     * ({@code fragment.getSignatureContributor()}) 하나로만 키를 잡았는데, 이러면 호출
+     * 지점의 정적 타입이 (계약 이름이 아니라) 리포지토리 인터페이스 자체인 경우(가장 흔한
+     * 호출 형태입니다 — 소비자는 보통 필드를 리포지토리 인터페이스 타입으로 선언합니다)
+     * {@link #implementationsOf} 가 빈 집합을 돌려줘 워커가 프래그먼트 본문으로 내려가지
+     * 못하고, 그 프래그먼트의 쓰기가 {@code writes}/{@code unresolved} 어디에도 나타나지
+     * 않고 조용히 사라졌습니다(실측: 리뷰 라운드 1 — pirl-spring 의 레거시 명명 규칙인
+     * {@code SlotInstanceRepositoryImpl} 로 재현). 리포지토리 인터페이스와 그 전이적
+     * 상위 인터페이스, 프래그먼트 계약 이름 전부를 프래그먼트 구현체의 키로 쓰면, 그중
+     * 어느 타입으로 호출하든 워커가 구현체를 찾습니다.
+     *
+     * <p>리포지토리 인터페이스 하나에 프래그먼트가 여러 개(또는 리포지토리 인터페이스
+     * 자체의 다른 CRUD 메서드) 있으면, 한 프래그먼트 구현체가 실제로 갖고 있지 않은
+     * 메서드로도 {@link MethodRef} 후보가 만들어집니다. 이 후보가 안전한 것은 {@code
+     * classes.resolveMethod} 가 못 찾는 후보를 조용히 걸러서가 아니라(그렇게 가정했다가
+     * 리뷰 라운드 1 에서 실측으로 틀렸음이 드러났습니다 — 이 경우 워커가 "본문을 읽을 수
+     * 없습니다" 를 잘못 보고해 완전히 해결된 엔드포인트까지 미해결로 만들었습니다), 코어
+     * {@code CallGraphWalker.descendTargets} 가 그런 후보를 애초에 방문 대상에 넣지 않도록
+     * 함께 고쳤기 때문입니다(그 클래스의 javadoc 참고). 이 색인 확장과 그 코어 수정은
+     * 반드시 함께 있어야 합니다 — 하나만 있으면 각각 조용한 누락(F1)과 거짓 미해결을
+     * 만듭니다.
+     *
      * <p>{@code Repositories} 의 도메인 타입 순회와 {@code RepositoryInformation.getFragments()}
      * 는 둘 다 순서를 보장하지 않는 컬렉션(해시 기반 순회, {@code Set})을 돌려줍니다. 색인
      * 구축이 JVM 재시작에 걸쳐 같은 결과를 내도록 이름으로 정렬해 순회합니다.
@@ -222,8 +245,15 @@ public final class SpringProgramModel implements ProgramModel {
             RepositoryInformation info = information.get();
             String entity = MethodRefs.internalNameOf(domainType);
             Class<?> repositoryInterface = info.getRepositoryInterface();
-            registerEntityMapping(byRepository, conflicting,
-                MethodRefs.internalNameOf(repositoryInterface), entity);
+
+            // 이 리포지토리에 걸리는 이름을 전부 모읍니다. byRepository 에 등록하는 이름과
+            // 정확히 같은 집합이며, 아래에서 이 리포지토리의 프래그먼트 구현체를 이 집합
+            // 전부의 키로 등록하는 데 그대로 씁니다(클래스 javadoc 참고).
+            Set<String> repositoryNames = new LinkedHashSet<>();
+
+            String repositoryInterfaceName = MethodRefs.internalNameOf(repositoryInterface);
+            registerEntityMapping(byRepository, conflicting, repositoryInterfaceName, entity);
+            repositoryNames.add(repositoryInterfaceName);
 
             // 리포지토리 인터페이스 이름 규칙(레거시: `XxxRepository extends ..., XxxCustom` 에
             // `XxxRepositoryImpl` 을 붙이는 방식, pirl-spring 의 SlotInstanceRepository 가 이
@@ -261,8 +291,9 @@ public final class SpringProgramModel implements ProgramModel {
                     continue;
                 }
                 if (!isSpringDataInfrastructureType(candidate)) {
-                    registerEntityMapping(byRepository, conflicting,
-                        MethodRefs.internalNameOf(candidate), entity);
+                    String candidateName = MethodRefs.internalNameOf(candidate);
+                    registerEntityMapping(byRepository, conflicting, candidateName, entity);
+                    repositoryNames.add(candidateName);
                 }
                 pendingInterfaces.addAll(List.of(candidate.getInterfaces()));
             }
@@ -271,17 +302,28 @@ public final class SpringProgramModel implements ProgramModel {
             fragments.sort(Comparator.comparing(
                 fragment -> MethodRefs.internalNameOf(fragment.getSignatureContributor())));
 
+            // 먼저 이 리포지토리의 프래그먼트 계약 이름을 전부 repositoryNames 에 채웁니다.
+            // 구현체 등록(아래 두 번째 루프)이 이 리포지토리의 완성된 이름 집합을 보게
+            // 하려는 것입니다 — 프래그먼트가 여러 개면, 나중 프래그먼트의 계약 이름도 앞선
+            // 프래그먼트 구현체의 키가 되어야 하기 때문입니다(리포지토리 인터페이스 타입으로
+            // 호출하면 정적 타입이 그 리포지토리의 모든 프래그먼트 메서드를 함께 노출하므로).
             for (RepositoryFragment<?> fragment : fragments) {
-                Class<?> contributor = fragment.getSignatureContributor();
-                String contributorName = MethodRefs.internalNameOf(contributor);
+                String contributorName = MethodRefs.internalNameOf(fragment.getSignatureContributor());
                 registerEntityMapping(byRepository, conflicting, contributorName, entity);
+                repositoryNames.add(contributorName);
+            }
 
+            for (RepositoryFragment<?> fragment : fragments) {
                 // getImplementationClass() 는 Spring Data 4.x 에만 있습니다.
                 // 3.x 와 4.x 모두에 있는 getImplementation() 을 씁니다.
-                fragment.getImplementation().ifPresent(implementation -> byFragment
-                    .computeIfAbsent(contributorName, key -> new LinkedHashSet<>())
-                    .add(MethodRefs.internalNameOf(
-                        ClassUtils.getUserClass(implementation.getClass()))));
+                fragment.getImplementation().ifPresent(implementation -> {
+                    String implementationName = MethodRefs.internalNameOf(
+                        ClassUtils.getUserClass(implementation.getClass()));
+                    for (String name : repositoryNames) {
+                        byFragment.computeIfAbsent(name, key -> new LinkedHashSet<>())
+                            .add(implementationName);
+                    }
+                });
             }
         }
         this.repositoryEntities = Collections.unmodifiableMap(new LinkedHashMap<>(byRepository));
