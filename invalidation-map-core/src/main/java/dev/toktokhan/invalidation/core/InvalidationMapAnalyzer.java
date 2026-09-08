@@ -169,8 +169,17 @@ public final class InvalidationMapAnalyzer {
      * <p>반환 타입은 비교하지 않습니다. 공변 반환 재정의(인터페이스는 {@code Object} 를,
      * 구현은 더 좁은 타입을 반환)는 반환 타입만 달라도 JVM 디스크립터 전체가 달라지므로,
      * 전체 디스크립터로 비교하면 인터페이스의 어노테이션을 놓칩니다(누락 방향이라
-     * 4.4 원칙 위반). 이름과 파라미터가 같고 반환 타입만 다른 메서드 두 개는 같은
-     * 클래스 안에 존재할 수 없으므로(자바 문법상 금지) 모호하지 않습니다.
+     * 4.4 원칙 위반).
+     *
+     * <p>후보에서 브릿지 메서드({@code MethodFacts.isBridge()})를 뺍니다. 이름과 파라미터가
+     * 같고 반환 타입만 다른 메서드 두 개가 "같은 클래스 안에 있을 수 없다" 는 것은 사실이
+     * 아닙니다 — 공변 반환 재정의를 컴파일하면 컴파일러가 상위 타입의 소거된 시그니처를
+     * 만족시키는 synthetic 브릿지 메서드를 실제 메서드와 함께 만들어, 정확히 그런 쌍이
+     * 같은 클래스에 생깁니다. 브릿지를 걸러내지 않으면 어느 쪽이 먼저 뽑히는지가 메서드
+     * 테이블의 물리적 순서(컴파일러 구현 세부사항, JVMS 에 순서 보장 없음)에 좌우되어,
+     * 개발자가 어노테이션을 공변 반환 재정의 메서드 자신에 붙인 경우 브릿지가 먼저 오는
+     * 컴파일러에서는 조용히 누락될 수 있습니다. 브릿지를 빼면 이름·파라미터가 같은 후보는
+     * 실제 메서드 하나만 남으므로 어느 쪽을 뽑을지 고민할 필요가 없습니다.
      */
     private Optional<AnnotationValues> annotationOn(ClassRepository classes, MethodRef handler,
         String annotationDescriptor) {
@@ -181,7 +190,8 @@ public final class InvalidationMapAnalyzer {
         for (String owner : candidates) {
             Optional<AnnotationValues> found = classes.facts(owner)
                 .flatMap(classFacts -> classFacts.methods().stream()
-                    .filter(method -> method.ref().name().equals(handler.name())
+                    .filter(method -> !method.isBridge()
+                        && method.ref().name().equals(handler.name())
                         && parameterDescriptorOf(method.ref().descriptor()).equals(parameters))
                     .findFirst())
                 .map(methodFacts -> methodFacts.annotations().get(annotationDescriptor));

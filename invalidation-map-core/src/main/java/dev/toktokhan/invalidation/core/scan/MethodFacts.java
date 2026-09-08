@@ -29,6 +29,17 @@ public record MethodFacts(
         return (access & Opcodes.ACC_STATIC) != 0;
     }
 
+    /**
+     * 컴파일러가 만든 브릿지 메서드인지입니다. 공변 반환 재정의(반환 타입을 좁힌
+     * 오버라이드)를 컴파일하면, 상위 타입의 소거된 시그니처를 만족시키는 브릿지 메서드가
+     * 실제 메서드와 별도로 생깁니다 — 이름·파라미터가 같고 반환 타입만 다릅니다.
+     * {@code ACC_SYNTHETIC} 까지 함께 걸러내면 안 됩니다. 람다 본문처럼 {@code lambdaBodies}
+     * 가 가리키는 synthetic 메서드도 걸러져 워커가 그 본문을 찾지 못하게 됩니다.
+     */
+    public boolean isBridge() {
+        return (access & Opcodes.ACC_BRIDGE) != 0;
+    }
+
     public boolean isConstructor() {
         return ref.name().equals("<init>") || ref.name().equals("<clinit>");
     }
