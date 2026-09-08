@@ -9,9 +9,11 @@ import jakarta.persistence.metamodel.Metamodel;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Method;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -229,16 +231,40 @@ public final class SpringProgramModel implements ProgramModel {
             // 인터페이스가 아니라 구현체 클래스 자체를 돌려줍니다(실측: 리뷰 라운드 1). 그래서
             // 아래 프래그먼트 루프만으로는 이 경우 프래그먼트 인터페이스가 어떤 키로도
             // 등록되지 않아 entityFor 가 계약(ProgramModel.entityFor javadoc)을 어깁니다.
-            // 리포지토리 인터페이스가 직접 선언한 인터페이스를 훑어 Spring Data 기반 타입이
-            // 아닌 것을 같은 엔티티로 등록해 이 경로를 메웁니다. getInterfaces() 는 클래스
-            // 파일에 선언된 순서 그대로를 돌려주므로(컴파일러가 결정, JVMS 상 고정) 정렬이
-            // 필요 없습니다 — Set 을 돌려주는 getFragments() 와 다릅니다.
-            for (Class<?> declaredInterface : repositoryInterface.getInterfaces()) {
-                if (isSpringDataInfrastructureType(declaredInterface)) {
+            //
+            // 리포지토리 인터페이스가 직접 선언한 인터페이스만 보는 것으로는 부족합니다.
+            // 프래그먼트 인터페이스가 `@NoRepositoryBean` 베이스 리포지토리 인터페이스를 통해
+            // 간접 상속되는 경우(Spring Data 의 흔한 관용구), `getInterfaces()` 는 직접 선언만
+            // 돌려주므로(JVMS, transitive 아님) 그 프래그먼트를 놓칩니다(실측: 리뷰 라운드 2,
+            // R1 — `DeepRepository extends DeepBaseRepository` 이고 `DeepBaseRepository` 가
+            // `DeepFragment` 를 선언하는 구조에서 재현됨). 상위 인터페이스 계층을 전이적으로
+            // 훑어 이를 메웁니다.
+            //
+            // 방문 집합(visitedInterfaces)으로 다이아몬드 상속의 중복 방문을 막습니다(인터페이스
+            // 상속은 순환할 수 없으므로 무한 루프는 아니지만, 막지 않으면 같은 후보를 여러 번
+            // 등록 시도하게 됩니다).
+            //
+            // Spring Data 기반 타입을 만나도 그 상위 인터페이스까지 계속 내려갑니다(등록만
+            // 건너뛰고 순회는 멈추지 않습니다). "Spring Data 인터페이스는 절대 사용자 타입을
+            // extends 하지 않는다"는 가정에 기대지 않기 위함입니다 — 후보마다 다시 패키지
+            // 필터를 거치므로 계속 내려가는 비용은 무해합니다(등록 결과에 영향 없음, 순회량만
+            // 늘어남).
+            //
+            // 각 클래스의 getInterfaces() 는 선언 순서 그대로를 돌려주므로(컴파일러가 결정,
+            // JVMS 상 고정) 정렬이 필요 없습니다 — Set 을 돌려주는 getFragments() 와 다릅니다.
+            Set<Class<?>> visitedInterfaces = new LinkedHashSet<>();
+            Deque<Class<?>> pendingInterfaces =
+                new ArrayDeque<>(List.of(repositoryInterface.getInterfaces()));
+            while (!pendingInterfaces.isEmpty()) {
+                Class<?> candidate = pendingInterfaces.poll();
+                if (!visitedInterfaces.add(candidate)) {
                     continue;
                 }
-                registerEntityMapping(byRepository, conflicting,
-                    MethodRefs.internalNameOf(declaredInterface), entity);
+                if (!isSpringDataInfrastructureType(candidate)) {
+                    registerEntityMapping(byRepository, conflicting,
+                        MethodRefs.internalNameOf(candidate), entity);
+                }
+                pendingInterfaces.addAll(List.of(candidate.getInterfaces()));
             }
 
             List<RepositoryFragment<?>> fragments = new ArrayList<>(info.getFragments());
