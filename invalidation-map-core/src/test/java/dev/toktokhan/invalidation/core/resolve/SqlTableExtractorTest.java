@@ -73,6 +73,15 @@ class SqlTableExtractorTest {
     }
 
     @Test
+    void entities_multiTableUpdate_resolvesBothEntities() {
+        // MySQL 의 다중 테이블 UPDATE 문법입니다. UPDATE 뒤 바로 다음 토큰만 보는 구현은
+        // 둘째 테이블(trip_leg)을 놓쳐 쓰기 무효화가 누락됩니다.
+        assertThat(SqlTableExtractor.entities(
+            "UPDATE trip_log a, trip_leg b SET a.title = b.name WHERE a.id = b.trip_id", entities))
+            .containsExactlyInAnyOrder(TRIP, LEG);
+    }
+
+    @Test
     void kindOf_insert_isWrite() {
         assertThat(SqlTableExtractor.kindOf("INSERT INTO t VALUES (1)")).isEqualTo(AccessKind.WRITE);
     }
