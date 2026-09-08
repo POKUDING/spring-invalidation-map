@@ -425,13 +425,32 @@ APT 의 고유한 장점은 컴파일을 실패시킬 수 있다는 점입니다
 
 ## 11. 호환 범위
 
-- Java 17 이상
-- Spring Boot 3.x
-- springdoc-openapi 2.x
-- Spring Data JPA
-- QueryDSL 5.x (선택. 없으면 해당 Resolver 를 등록하지 않습니다.)
+- **JVM 17 과 21** 에서 동작합니다. 라이브러리는 Java 17 바이트코드로 컴파일합니다.
+- **Spring Boot 4.x 를 주 대상으로 하고 3.x 도 지원합니다.**
+- springdoc-openapi 2.x 와 3.x
+- Spring Data JPA 3.x 와 4.x
+- QueryDSL 5.x (선택. 없으면 해당 Resolver 가 아무것도 매칭하지 않는 무동작이 되므로 조건부
+  등록이 필요 없습니다.)
 
-ASM 버전은 읽을 클래스 파일 버전을 지원하는 것으로 맞춥니다.
+두 계열을 아티팩트 하나로 지원할 수 있는 근거는 우리가 쓰는 API 가 동일하다는 사실입니다.
+
+| API | 3.x 계열 | 4.x 계열 |
+| --- | --- | --- |
+| `OperationCustomizer.customize(Operation, HandlerMethod)` | springdoc 2.5.0 | springdoc 3.0.1 |
+| `META-INF/spring/...AutoConfiguration.imports` 등록 | Boot 3.3.5 | Boot 4.0.6 |
+| `Repositories.iterator()` / `getRepositoryInformationFor(Class)` | Data 3.3.5 | Data 4.0.5 |
+| `RepositoryMetadata.getRepositoryInterface()` / `getFragments()` | Data 3.3.5 | Data 4.0.5 |
+| `RepositoryFragment.getSignatureContributor()` / `getImplementation()` | Data 3.3.5 | Data 4.0.5 |
+| `RequestMappingInfo.getPathPatternsCondition()` / `getMethodsCondition()` | Framework 6.1.14 | Framework 7.0.7 |
+| `BeanFactory.getType(String, boolean)` | Framework 6.1.14 | Framework 7.0.7 |
+| `AutoConfigurationPackages.get(BeanFactory)` | Boot 3.3.5 | Boot 4.0.6 |
+
+Spring Data 4.x 에만 있는 `RepositoryFragment.getImplementationClass()` 는 쓰지 않습니다.
+양쪽에 다 있는 `getImplementation()` 을 써서 코드 경로를 하나로 유지합니다.
+
+ASM 버전은 읽을 클래스 파일 버전을 지원하는 것으로 맞춥니다. ASM 9.7.1 은 Java 22(major 66)
+까지 읽으므로 Java 21 로 컴파일한 소비자를 덮습니다. 소비자가 더 새 JDK 로 옮기면 ASM 을
+올려야 하며, 그때까지는 클래스 읽기 실패가 미해결로 드러납니다 (6.2 참고).
 
 ## 12. 프로젝트 좌표
 
