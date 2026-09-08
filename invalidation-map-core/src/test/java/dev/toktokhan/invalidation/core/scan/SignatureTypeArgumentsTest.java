@@ -62,8 +62,15 @@ class SignatureTypeArgumentsTest {
     }
 
     @Test
-    void typeArgumentsOfFieldType_noGenericTypeArgument_returnsEmptyList() {
+    void typeArgumentsOfFieldType_nullSignature_returnsEmptyList() {
         List<String> arguments = SignatureTypeArguments.typeArgumentsOfFieldType(null);
+
+        assertThat(arguments).isEmpty();
+    }
+
+    @Test
+    void typeArgumentsOfFieldType_nonGenericFieldSignature_returnsEmptyList() {
+        List<String> arguments = SignatureTypeArguments.typeArgumentsOfFieldType("Ljava/lang/String;");
 
         assertThat(arguments).isEmpty();
     }
