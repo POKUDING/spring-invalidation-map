@@ -8,8 +8,10 @@ import dev.toktokhan.invalidation.core.scan.MethodFacts;
 import dev.toktokhan.invalidation.core.scan.SignatureTypeArguments;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -26,14 +28,34 @@ public final class ClassRepository {
     private final ProgramModel program;
     private final Map<String, Optional<ClassFacts>> factsCache = new ConcurrentHashMap<>();
     private final Map<String, List<String>> supertypeCache = new ConcurrentHashMap<>();
+    private final Map<String, String> unreadable = new ConcurrentHashMap<>();
 
     public ClassRepository(ProgramModel program) {
         this.program = program;
     }
 
+    /**
+     * 클래스 바이트를 {@link ClassFacts} 로 바꿉니다.
+     *
+     * <p>읽기가 실패하면 예외를 다시 던지지 않고 사유를 기록한 뒤 빈 값을 돌려줍니다.
+     * 이 라이브러리는 런타임에 돌므로, ASM 이 모르는 클래스 파일 버전을 만나 예외를 던지면
+     * 애플리케이션의 {@code /v3/api-docs} 가 통째로 실패합니다.
+     */
     public Optional<ClassFacts> facts(String internalName) {
-        return factsCache.computeIfAbsent(internalName,
-            name -> program.classBytes(name).map(ClassFactsReader::read));
+        return factsCache.computeIfAbsent(internalName, name -> {
+            try {
+                return program.classBytes(name).map(ClassFactsReader::read);
+            } catch (RuntimeException e) {
+                unreadable.put(name, e.getClass().getSimpleName()
+                    + (e.getMessage() == null ? "" : ": " + e.getMessage()));
+                return Optional.empty();
+            }
+        });
+    }
+
+    /** 읽지 못한 클래스와 그 사유입니다. 분석기가 미해결 사유로 옮겨 담습니다. */
+    public Map<String, String> unreadableClasses() {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(unreadable));
     }
 
     /** 선언된 그 클래스에서만 찾습니다. */
