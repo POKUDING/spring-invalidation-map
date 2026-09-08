@@ -219,8 +219,27 @@ public final class SpringProgramModel implements ProgramModel {
             }
             RepositoryInformation info = information.get();
             String entity = MethodRefs.internalNameOf(domainType);
+            Class<?> repositoryInterface = info.getRepositoryInterface();
             registerEntityMapping(byRepository, conflicting,
-                MethodRefs.internalNameOf(info.getRepositoryInterface()), entity);
+                MethodRefs.internalNameOf(repositoryInterface), entity);
+
+            // 리포지토리 인터페이스 이름 규칙(레거시: `XxxRepository extends ..., XxxCustom` 에
+            // `XxxRepositoryImpl` 을 붙이는 방식, pirl-spring 의 SlotInstanceRepository 가 이
+            // 패턴입니다)에서는 getFragments() 의 signatureContributor 가 프래그먼트
+            // 인터페이스가 아니라 구현체 클래스 자체를 돌려줍니다(실측: 리뷰 라운드 1). 그래서
+            // 아래 프래그먼트 루프만으로는 이 경우 프래그먼트 인터페이스가 어떤 키로도
+            // 등록되지 않아 entityFor 가 계약(ProgramModel.entityFor javadoc)을 어깁니다.
+            // 리포지토리 인터페이스가 직접 선언한 인터페이스를 훑어 Spring Data 기반 타입이
+            // 아닌 것을 같은 엔티티로 등록해 이 경로를 메웁니다. getInterfaces() 는 클래스
+            // 파일에 선언된 순서 그대로를 돌려주므로(컴파일러가 결정, JVMS 상 고정) 정렬이
+            // 필요 없습니다 — Set 을 돌려주는 getFragments() 와 다릅니다.
+            for (Class<?> declaredInterface : repositoryInterface.getInterfaces()) {
+                if (isSpringDataInfrastructureType(declaredInterface)) {
+                    continue;
+                }
+                registerEntityMapping(byRepository, conflicting,
+                    MethodRefs.internalNameOf(declaredInterface), entity);
+            }
 
             List<RepositoryFragment<?>> fragments = new ArrayList<>(info.getFragments());
             fragments.sort(Comparator.comparing(
@@ -277,13 +296,36 @@ public final class SpringProgramModel implements ProgramModel {
         }
     }
 
-    /** 엔티티와 임베더블을 모두 넣습니다. @Embedded 값 타입도 응답에 실리기 때문입니다. */
+    /**
+     * {@code JpaRepository}, {@code CrudRepository}, {@code PagingAndSortingRepository} 처럼
+     * Spring Data 가 제공하는 리포지토리 기반 타입인지 판별합니다. 이런 타입은 사용자가
+     * 정의한 프래그먼트가 아니므로 엔티티 대응 후보에서 뺍니다.
+     *
+     * <p>패키지 접두어로 판별합니다. 사용자가 직접 선언하는 프래그먼트 인터페이스는 항상
+     * 애플리케이션 자신의 패키지에 있고 {@code org.springframework.data} 아래에 있을 수
+     * 없으므로, 이 기준은 사용자 프래그먼트를 잘못 걸러내지 않습니다.
+     */
+    private static boolean isSpringDataInfrastructureType(Class<?> type) {
+        String packageName = type.getPackageName();
+        return packageName.equals("org.springframework.data")
+            || packageName.startsWith("org.springframework.data.");
+    }
+
+    /**
+     * 엔티티와 임베더블을 모두 넣습니다. @Embedded 값 타입도 응답에 실리기 때문입니다.
+     *
+     * <p>{@code Metamodel.getEntities()}/{@code getEmbeddables()} 는 JPA 명세상 순회 순서를
+     * 보장하지 않는 {@code Set} 을 돌려줍니다. {@code endpoints()}/{@code implementationsOf()}
+     * 와 같은 기준(이름 정렬)으로 고정합니다.
+     */
     private Set<String> buildEntities() {
         Set<String> found = new LinkedHashSet<>();
         Metamodel metamodel = entityManagerFactory.getMetamodel();
         metamodel.getEntities().forEach(type -> addJavaType(found, type.getJavaType()));
         metamodel.getEmbeddables().forEach(type -> addJavaType(found, type.getJavaType()));
-        return Collections.unmodifiableSet(new LinkedHashSet<>(found));
+        List<String> sorted = new ArrayList<>(found);
+        sorted.sort(Comparator.naturalOrder());
+        return Collections.unmodifiableSet(new LinkedHashSet<>(sorted));
     }
 
     private static void addJavaType(Set<String> target, Class<?> javaType) {
@@ -295,6 +337,11 @@ public final class SpringProgramModel implements ProgramModel {
     /**
      * {@code @TransactionalEventListener} 는 {@code @EventListener} 로 메타 어노테이션되어
      * 있으므로 한 번만 검사하면 둘 다 걸립니다.
+     *
+     * <p>{@code ReflectionUtils.getAllDeclaredMethods} 는 JDK 명세상 {@code Class.getMethods()}/
+     * {@code getDeclaredMethods()} 의 순서를 보장하지 않습니다. 오너·이름·디스크립터 순으로
+     * 정렬해 고정합니다 — {@code endpoints()} 가 {@link Endpoint} 를 정렬하는 것과 같은
+     * 이유입니다.
      */
     private Set<MethodRef> buildEventListeners() {
         Set<MethodRef> found = new LinkedHashSet<>();
@@ -310,7 +357,11 @@ public final class SpringProgramModel implements ProgramModel {
                 }
             }
         }
-        return Collections.unmodifiableSet(new LinkedHashSet<>(found));
+        List<MethodRef> sorted = new ArrayList<>(found);
+        sorted.sort(Comparator.comparing(MethodRef::owner)
+            .thenComparing(MethodRef::name)
+            .thenComparing(MethodRef::descriptor));
+        return Collections.unmodifiableSet(new LinkedHashSet<>(sorted));
     }
 
     /** {@code allowFactoryBeanInit = false} 라 FactoryBean 초기화 부수 효과가 없습니다. */
