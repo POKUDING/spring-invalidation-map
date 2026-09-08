@@ -28,6 +28,7 @@ public final class FakeProgramModel implements ProgramModel {
     private final Map<String, String> repositoryEntities = new LinkedHashMap<>();
     private final Map<String, Set<String>> implementations = new LinkedHashMap<>();
     private final Set<String> entities = new LinkedHashSet<>();
+    private final Set<MethodRef> eventListeners = new LinkedHashSet<>();
 
     private FakeProgramModel() {
     }
@@ -62,6 +63,11 @@ public final class FakeProgramModel implements ProgramModel {
         return this;
     }
 
+    public FakeProgramModel withEventListener(Class<?> type, String methodName) {
+        eventListeners.add(MethodRefs.of(findMethod(type, methodName)));
+        return this;
+    }
+
     @Override
     public List<Endpoint> endpoints() {
         return List.copyOf(endpoints);
@@ -90,6 +96,12 @@ public final class FakeProgramModel implements ProgramModel {
     public Set<String> entities() {
         // Set.copyOf 는 JVM 기동마다 순회 순서가 달라집니다. 삽입 순서를 보존합니다.
         return Collections.unmodifiableSet(new LinkedHashSet<>(entities));
+    }
+
+    @Override
+    public Set<MethodRef> eventListeners() {
+        // Set.copyOf 는 JVM 기동마다 순회 순서가 달라집니다. 삽입 순서를 보존합니다.
+        return Collections.unmodifiableSet(new LinkedHashSet<>(eventListeners));
     }
 
     public MethodRef ref(Class<?> type, String methodName, Class<?>... parameterTypes) {
