@@ -1,14 +1,24 @@
 package dev.toktokhan.invalidation.core.fixture.event;
 
+import dev.toktokhan.invalidation.core.fixture.entity.Trip;
+import dev.toktokhan.invalidation.core.fixture.repo.TripJpaRepository;
 import org.springframework.context.event.EventListener;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 public class TripEventListeners {
 
-    /** 파라미터가 상위 타입입니다. TripCompletedEvent 발행에도 걸려야 합니다. */
+    private TripJpaRepository repository;
+
+    /**
+     * 파라미터가 상위 타입입니다. TripCompletedEvent 발행에도 걸려야 합니다.
+     *
+     * <p>리포지토리 저장 호출이 있어야 분석기가 이벤트를 지나 도달한 리스너의 엔티티 접근을
+     * 찾아냅니다. 본문이 비어 있으면 어떤 엔티티도 나오지 않아 그 검증이 성립하지 않습니다.
+     */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onTripEvent(TripEvent event) {
+        repository.save(new Trip());
     }
 
     /** 관련 없는 이벤트를 듣습니다. 걸리면 안 됩니다. */
