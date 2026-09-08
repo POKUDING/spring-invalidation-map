@@ -8,6 +8,10 @@ import dev.toktokhan.invalidation.core.fixture.entity.TripLeg;
 import dev.toktokhan.invalidation.core.fixture.event.TripEventListeners;
 import dev.toktokhan.invalidation.core.fixture.repo.TripJpaRepository;
 import dev.toktokhan.invalidation.core.fixture.web.TripController;
+import dev.toktokhan.invalidation.core.resolve.DirtyCheckResolver;
+import dev.toktokhan.invalidation.core.resolve.EntityManagerResolver;
+import dev.toktokhan.invalidation.core.resolve.JpaRepositoryResolver;
+import dev.toktokhan.invalidation.core.resolve.QuerydslResolver;
 import dev.toktokhan.invalidation.core.support.FakeProgramModel;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -34,6 +38,8 @@ class InvalidationMapAnalyzerTest {
         .withEndpoint("GET", "/trips/hint/{title}", TripController.class, "readWithHint", String.class)
         .withEndpoint("PUT", "/trips/override/{title}", TripController.class, "writeWithOverride",
             Trip.class, String.class)
+        .withEndpoint("GET", "/trips/covariant/{title}", TripController.class,
+            "readWithCovariantReturn", String.class)
         .withRepositoryEntity(TripJpaRepository.class, Trip.class)
         .withEntity(TripLeg.class)
         .withEntity(Coordinate.class)
@@ -108,13 +114,33 @@ class InvalidationMapAnalyzerTest {
     }
 
     @Test
-    void analyze_readsEntitiesAnnotation_addsToAnalysisResult() {
+    void analyze_readsEntitiesOnSupertype_isFound() {
         // 어노테이션은 TripController#readWithHint 자신이 아니라 상위 타입인 TripEndpoints
-        // 인터페이스에 붙어 있습니다. 연관 확장은 끄고 annotation 병합만 봅니다.
+        // 인터페이스에 붙어 있습니다. 상위 타입 탐색 경로 자체를 봅니다.
+        EndpointEntities entities = analyze(options(false)).forHandler(readWithHintRef()).orElseThrow();
+
+        assertThat(entities.reads()).containsExactlyInAnyOrder(TRIP, COORDINATE);
+    }
+
+    @Test
+    void analyze_readsEntitiesWithoutOverride_addsToAnalysisResult() {
+        // override 를 안 쓰면 분석 결과(Trip)에 어노테이션 값(Coordinate)이 더해집니다.
+        // 연관 확장은 끄고 병합 자체만 봅니다.
         EndpointEntities entities = analyze(options(false)).forHandler(readWithHintRef()).orElseThrow();
 
         assertThat(entities.reads()).containsExactlyInAnyOrder(TRIP, COORDINATE);
         assertThat(entities.writes()).isEmpty();
+    }
+
+    @Test
+    void analyze_readsEntitiesOnCovariantReturnSupertype_isFound() {
+        // TripEndpoints#readWithCovariantReturn 은 Object 를 반환하지만 TripController 는
+        // Trip 으로 좁혀 재정의합니다(공변 반환). 반환 타입이 다르면 디스크립터 전체가
+        // 달라지므로, 어노테이션 탐색이 이름·파라미터만 비교해야 이 어노테이션을 찾습니다.
+        EndpointEntities entities = analyze(options(false))
+            .forHandler(readWithCovariantReturnRef()).orElseThrow();
+
+        assertThat(entities.reads()).containsExactlyInAnyOrder(TRIP, COORDINATE);
     }
 
     @Test
@@ -154,8 +180,30 @@ class InvalidationMapAnalyzerTest {
             .forHandler(renameRef()).orElseThrow();
 
         assertThat(entities.resolved()).isFalse();
-        assertThat(entities.unresolved())
-            .anySatisfy(reason -> assertThat(reason).contains("클래스를 읽지 못했습니다"));
+        // rename 자체는 다른 미해결 사유가 없으므로(writes={Trip} 로 채워짐), 원소 개수를
+        // 먼저 고정해 여분이 섞여도 통과하는 단정을 막습니다.
+        assertThat(entities.unresolved()).singleElement()
+            .asString().contains("클래스를 읽지 못했습니다");
+    }
+
+    @Test
+    void analyze_multipleUnresolvedReasons_areSortedTogether() {
+        // publish 핸들러에 nodeBudget=1 을 주면 TripController#publish 프레임까지만 방문하고
+        // TripService#publish 본문(이벤트 발행 지점)으로는 못 내려갑니다. reads/writes 가
+        // 모두 비고("엔티티 접근을 찾지 못했습니다") 예산도 초과("호출 사슬이 노드 예산 1
+        // 을 넘었습니다") 해 사유가 둘 붙습니다. 정렬된 순서로 나오는지 확인합니다 —
+        // analyzeEndpoint 안의 unresolved.sort(...) 를 지우면 이 단정이 깨집니다.
+        //
+        // 전역 unreadable-클래스 경로(ThrowingClassBytesProgramModel)를 대신 썼다면 안 됩니다
+        // — 그 경로는 withReasons 에서 다시 정렬하므로, analyzeEndpoint 자체의 정렬 한 줄이
+        // 지워져도 그 재정렬에 가려 이 테스트가 통과해 버립니다.
+        AnalyzerOptions tinyBudget = new AnalyzerOptions(List.of(BASE), 1, true);
+
+        EndpointEntities entities = analyzer.analyze(program, tinyBudget)
+            .forHandler(publishRef()).orElseThrow();
+
+        assertThat(entities.unresolved()).containsExactly(
+            "엔티티 접근을 찾지 못했습니다", "호출 사슬이 노드 예산 1 을 넘었습니다");
     }
 
     @Test
@@ -166,8 +214,33 @@ class InvalidationMapAnalyzerTest {
             .forHandler(readRef()).orElseThrow();
 
         assertThat(entities.resolved()).isFalse();
-        assertThat(entities.unresolved())
-            .anySatisfy(reason -> assertThat(reason).contains("노드 예산"));
+        // read 의 reads 는 예산 초과와 무관하게 {Trip} 으로 채워지므로(CallGraphWalker 가
+        // 예산을 확인하기 전에 시작 프레임의 호출들을 방문자에게 먼저 넘김), 이 케이스의
+        // 미해결 사유는 예산 사유 단 하나입니다.
+        assertThat(entities.unresolved()).containsExactly("호출 사슬이 노드 예산 1 을 넘었습니다");
+    }
+
+    @Test
+    void analyze_handlerMappedToMultiplePaths_appearsOnceInMap() {
+        // 한 핸들러에 경로/HTTP 메서드가 여러 개 붙어도(InvalidationMap javadoc 이 드는
+        // 설계 근거) 결과 맵 항목은 하나여야 합니다.
+        FakeProgramModel multiPath = FakeProgramModel.create()
+            .withEndpoint("GET", "/a", TripController.class, "ping")
+            .withEndpoint("POST", "/b", TripController.class, "ping");
+
+        InvalidationMap map = analyzer.analyze(multiPath, options(true));
+
+        assertThat(map.byHandler()).hasSize(1);
+    }
+
+    @Test
+    void resolverOrder_isFixedByDesignDoc42_firstMatchWinsChainOrder() {
+        // 네 리졸버가 callee.owner() 기준으로 서로소라 지금은 순서가 결과를 바꾸지
+        // 않습니다(행동 기반 테스트로는 이 계약을 지킬 수 없음). 그래서 상수 자체를
+        // 단정합니다 — 재배열하거나 겹치는 리졸버가 끼어들면 이 테스트가 즉시 깨집니다.
+        assertThat(InvalidationMapAnalyzer.resolverOrder()).containsExactly(
+            JpaRepositoryResolver.class, EntityManagerResolver.class,
+            QuerydslResolver.class, DirtyCheckResolver.class);
     }
 
     private InvalidationMap analyze(AnalyzerOptions options) {
@@ -204,6 +277,10 @@ class InvalidationMapAnalyzerTest {
 
     private MethodRef writeWithOverrideRef() {
         return program.ref(TripController.class, "writeWithOverride", Trip.class, String.class);
+    }
+
+    private MethodRef readWithCovariantReturnRef() {
+        return program.ref(TripController.class, "readWithCovariantReturn", String.class);
     }
 
     /**

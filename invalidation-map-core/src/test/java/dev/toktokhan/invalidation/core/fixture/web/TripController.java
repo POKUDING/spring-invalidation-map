@@ -63,4 +63,14 @@ public class TripController implements TripEndpoints {
     public void writeWithOverride(Trip trip, String title) {
         trip.reset(title);
     }
+
+    /**
+     * 반환 타입을 {@code Trip} 으로 좁혀 재정의합니다(공변 반환). 어노테이션은
+     * {@link TripEndpoints} 에 있는데 디스크립터의 반환 타입 부분이 달라지므로, 어노테이션
+     * 탐색이 반환 타입을 무시하고 이름·파라미터만 비교해야 이 어노테이션을 찾습니다.
+     */
+    @Override
+    public Trip readWithCovariantReturn(String title) {
+        return repository.findByTitle(title).orElse(null);
+    }
 }
