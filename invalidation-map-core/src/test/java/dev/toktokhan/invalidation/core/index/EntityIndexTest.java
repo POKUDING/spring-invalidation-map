@@ -9,6 +9,7 @@ import dev.toktokhan.invalidation.core.fixture.entity.Booking;
 import dev.toktokhan.invalidation.core.fixture.entity.Coordinate;
 import dev.toktokhan.invalidation.core.fixture.entity.HTTPServer;
 import dev.toktokhan.invalidation.core.fixture.entity.Member;
+import dev.toktokhan.invalidation.core.fixture.entity.RenamedEntity;
 import dev.toktokhan.invalidation.core.fixture.entity.Trip;
 import dev.toktokhan.invalidation.core.fixture.entity.TripLeg;
 import dev.toktokhan.invalidation.core.fixture.entity.Waypoint;
@@ -20,23 +21,27 @@ import org.junit.jupiter.api.Test;
 class EntityIndexTest {
 
     private static final String TRIP = MethodRefs.internalNameOf(Trip.class);
+    private static final String LEG = MethodRefs.internalNameOf(TripLeg.class);
+    private static final String ACCOUNT = MethodRefs.internalNameOf(Account.class);
+    private static final String MEMBER = MethodRefs.internalNameOf(Member.class);
+    private static final String RENAMED = MethodRefs.internalNameOf(RenamedEntity.class);
 
     private final ClassRepository classes = new ClassRepository(FakeProgramModel.create());
 
-    // Set.of 는 JVM 기동마다 순회 순서가 달라집니다. 테이블명 충돌 판정은 순회 순서에
-    // 영향받지 않지만(EntityIndex 가 내부에서 정렬합니다), 생성자 입력 자체는 결정적인
-    // 순서를 보존하는 컬렉션을 씁니다. Member 를 Account 보다 먼저 두는 순서는
-    // entityForTable_explicitTableCollidesWithAnotherEntitysDefault_explicitWins 가
-    // 수정 전 코드에서 재현되도록 고른 순서입니다.
+    // Set.of 는 JVM 기동마다 순회 순서가 달라집니다. buildTableIndex 는 내부에서 이름을
+    // 정렬하고, 충돌한 후보는 이제 양쪽 다 등록하므로(entitiesForTable) 이 순서가 결과를
+    // 바꾸지 않습니다. 그래도 다른 단정들의 재현성을 위해 결정적인 순서를 보존하는
+    // 컬렉션을 그대로 씁니다.
     private final EntityIndex entities = new EntityIndex(classes, new LinkedHashSet<>(List.of(
         TRIP,
-        MethodRefs.internalNameOf(TripLeg.class),
+        LEG,
         MethodRefs.internalNameOf(Coordinate.class),
         MethodRefs.internalNameOf(Waypoint.class),
         MethodRefs.internalNameOf(HTTPServer.class),
-        MethodRefs.internalNameOf(Member.class),
-        MethodRefs.internalNameOf(Account.class),
-        MethodRefs.internalNameOf(Booking.class))));
+        MEMBER,
+        ACCOUNT,
+        MethodRefs.internalNameOf(Booking.class),
+        RENAMED)));
 
     @Test
     void isMutator_methodWritesOwnField_isTrue() {
@@ -123,41 +128,71 @@ class EntityIndexTest {
     }
 
     @Test
-    void entityForTable_explicitTableAnnotation_resolvesEntity() {
-        assertThat(entities.entityForTable("trip_log")).contains(TRIP);
+    void entitiesForTable_explicitTableAnnotation_resolvesEntity() {
+        assertThat(entities.entitiesForTable("trip_log")).containsExactly(TRIP);
     }
 
     @Test
-    void entityForTable_noTableAnnotation_resolvesBySnakeCaseDefault() {
-        assertThat(entities.entityForTable("trip_leg"))
-            .contains(MethodRefs.internalNameOf(TripLeg.class));
+    void entitiesForTable_noTableAnnotation_resolvesBySnakeCaseDefault() {
+        assertThat(entities.entitiesForTable("trip_leg")).containsExactly(LEG);
     }
 
     @Test
-    void entityForTable_noTableAnnotation_alsoResolvesByJpaDefault() {
-        assertThat(entities.entityForTable("TripLeg"))
-            .contains(MethodRefs.internalNameOf(TripLeg.class));
+    void entitiesForTable_noTableAnnotation_alsoResolvesByJpaDefault() {
+        assertThat(entities.entitiesForTable("TripLeg")).containsExactly(LEG);
     }
 
     @Test
-    void entityForTable_unknownTable_returnsEmpty() {
-        assertThat(entities.entityForTable("nowhere")).isEmpty();
+    void entitiesForTable_unknownTable_returnsEmpty() {
+        assertThat(entities.entitiesForTable("nowhere")).isEmpty();
     }
 
     @Test
-    void entityForTable_consecutiveUppercaseSimpleName_resolvesBySpringNamingStrategy() {
+    void entitiesForTable_consecutiveUppercaseSimpleName_resolvesBySpringNamingStrategy() {
         // 순진한 snake_case 는 "h_t_t_p_server" 를 등록하지만 실제 Spring Boot 기본
         // 테이블명은 "httpserver" 입니다(SpringPhysicalNamingStrategy 는 연속된 대문자
         // 사이에 밑줄을 넣지 않습니다).
-        assertThat(entities.entityForTable("httpserver"))
-            .contains(MethodRefs.internalNameOf(HTTPServer.class));
+        assertThat(entities.entitiesForTable("httpserver"))
+            .containsExactly(MethodRefs.internalNameOf(HTTPServer.class));
     }
 
     @Test
-    void entityForTable_explicitTableCollidesWithAnotherEntitysDefault_explicitWins() {
+    void entitiesForTable_explicitTableCollidesWithAnotherEntitysDefault_returnsBothEntities() {
         // Account 는 @Table(name = "member") 를 명시하고, Member 는 @Table 이 없어 기본값
-        // "member" 를 추정합니다. 개발자가 선언한 Account 의 명시값이 이겨야 합니다.
-        assertThat(entities.entityForTable("member"))
-            .contains(MethodRefs.internalNameOf(Account.class));
+        // "member" 를 추정합니다. 누락을 금지하는 전역 원칙에 따라 한쪽이 다른 쪽을 밀어내지
+        // 않고 둘 다 결과에 담겨야 합니다. 이 중 Account 의 명시값은 반드시 포함돼야 합니다.
+        assertThat(entities.entitiesForTable("member")).containsExactlyInAnyOrder(ACCOUNT, MEMBER);
+    }
+
+    @Test
+    void entityByName_simpleClassName_resolvesEntity() {
+        assertThat(entities.entityByName("Trip")).contains(TRIP);
+    }
+
+    @Test
+    void entityByName_customEntityAnnotationName_resolvesEntity() {
+        // RenamedEntity 는 @Entity(name = "LegacyBooking") 이라 클래스명이 아니라 이 값으로
+        // 찾아야 합니다.
+        assertThat(entities.entityByName("LegacyBooking")).contains(RENAMED);
+    }
+
+    @Test
+    void entityByName_unknownName_returnsEmpty() {
+        assertThat(entities.entityByName("Nowhere")).isEmpty();
+    }
+
+    @Test
+    void associationTargets_collectionAssociationField_resolvesElementType() {
+        assertThat(entities.associationTargets(TRIP, "legs")).containsExactly(LEG);
+    }
+
+    @Test
+    void associationTargets_fieldWithoutAssociationAnnotation_returnsEmpty() {
+        assertThat(entities.associationTargets(TRIP, "nextStop")).isEmpty();
+    }
+
+    @Test
+    void associationTargets_unknownField_returnsEmpty() {
+        assertThat(entities.associationTargets(TRIP, "missing")).isEmpty();
     }
 }
