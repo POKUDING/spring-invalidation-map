@@ -57,6 +57,25 @@ public final class SignatureTypeArguments {
         return result;
     }
 
+    /**
+     * 필드 타입 시그니처의 최상위 타입 인자를 돌려줍니다.
+     *
+     * <p>{@code Ljava/util/List<Lcom/example/TripLeg;>;} 에서 {@code [com/example/TripLeg]} 를,
+     * {@code Ljava/util/Map<Ljava/lang/Long;Lcom/example/Member;>;} 에서
+     * {@code [java/lang/Long, com/example/Member]} 를 얻습니다. 제네릭이 없으면 빈 목록입니다.
+     *
+     * <p>클래스 시그니처는 {@link SignatureReader#accept} 로 읽지만, 필드 타입 시그니처는
+     * 진입점이 달라 {@link SignatureReader#acceptType} 으로 읽어야 합니다.
+     */
+    public static List<String> typeArgumentsOfFieldType(String fieldSignature) {
+        if (fieldSignature == null || fieldSignature.isBlank()) {
+            return List.of();
+        }
+        Map<String, List<String>> collected = new LinkedHashMap<>();
+        new SignatureReader(fieldSignature).acceptType(new SupertypeCollector(collected));
+        return collected.values().stream().findFirst().orElse(List.of());
+    }
+
     private static final class SupertypeCollector extends SignatureVisitor {
 
         private final Map<String, List<String>> result;
