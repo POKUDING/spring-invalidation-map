@@ -9,11 +9,6 @@ package dev.toktokhan.invalidation.core;
  */
 public record MethodRef(String owner, String name, String descriptor) {
 
-    public String simpleOwnerName() {
-        int slash = owner.lastIndexOf('/');
-        return slash < 0 ? owner : owner.substring(slash + 1);
-    }
-
     @Override
     public String toString() {
         return owner + "." + name + descriptor;

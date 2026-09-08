@@ -2,6 +2,7 @@ package dev.toktokhan.invalidation.core.scan;
 
 import dev.toktokhan.invalidation.core.MethodRef;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -86,7 +87,8 @@ public final class ClassFactsReader {
 
         ClassFacts build() {
             return new ClassFacts(internalName, superName, interfaces, signature,
-                Map.copyOf(annotations), List.copyOf(fields), List.copyOf(methods));
+                Collections.unmodifiableMap(new LinkedHashMap<>(annotations)),
+                List.copyOf(fields), List.copyOf(methods));
         }
     }
 
@@ -149,8 +151,12 @@ public final class ClassFactsReader {
             Handle bootstrapMethodHandle, Object... bootstrapMethodArguments) {
             // 람다의 부트스트랩 인자는 [SAM 타입, 구현 메서드 핸들, 인스턴스화 타입] 입니다.
             // 문자열 결합(makeConcatWithConstants)의 인자에는 Handle 이 없으므로 걸러집니다.
+            // Handle 에는 메서드 핸들(태그 5~9)뿐 아니라 필드 핸들(태그 1~4)도 있습니다.
+            // record 의 toString/equals/hashCode 는 ObjectMethods.bootstrap 으로 만들어지고
+            // 부트스트랩 인자에 컴포넌트마다 REF_getField 핸들이 실리므로, 태그로 걸러
+            // 메서드 핸들만 lambdaBodies 에 담습니다.
             for (Object argument : bootstrapMethodArguments) {
-                if (argument instanceof Handle handle) {
+                if (argument instanceof Handle handle && handle.getTag() >= Opcodes.H_INVOKEVIRTUAL) {
                     lambdaBodies.add(new MethodRef(handle.getOwner(), handle.getName(), handle.getDesc()));
                 }
             }
@@ -159,8 +165,8 @@ public final class ClassFactsReader {
         @Override
         public void visitEnd() {
             sink.accept(new MethodFacts(ref, access, List.copyOf(calls), List.copyOf(newTypes),
-                List.copyOf(stringConstants), Set.copyOf(writtenOwnFields),
-                Map.copyOf(annotations), List.copyOf(lambdaBodies)));
+                List.copyOf(stringConstants), Collections.unmodifiableSet(new LinkedHashSet<>(writtenOwnFields)),
+                Collections.unmodifiableMap(new LinkedHashMap<>(annotations)), List.copyOf(lambdaBodies)));
         }
     }
 
@@ -205,7 +211,7 @@ public final class ClassFactsReader {
 
         @Override
         public void visitEnd() {
-            sink.accept(descriptor, new AnnotationValues(Map.copyOf(values)));
+            sink.accept(descriptor, new AnnotationValues(Collections.unmodifiableMap(new LinkedHashMap<>(values))));
         }
 
         /** 클래스 값은 ASM Type 으로 오므로 internal name 문자열로 바꿉니다. */
