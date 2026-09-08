@@ -24,6 +24,7 @@ public final class EntityIndex {
 
     private static final String TABLE = "Ljakarta/persistence/Table;";
     private static final String MAPPED_SUPERCLASS = "Ljakarta/persistence/MappedSuperclass;";
+    private static final String ENTITY = "Ljakarta/persistence/Entity;";
 
     private static final Set<String> ASSOCIATION_ANNOTATIONS = Set.of(
         "Ljakarta/persistence/OneToMany;",
@@ -40,7 +41,10 @@ public final class EntityIndex {
     private final Map<String, Set<String>> mutatorsByDeclaringClass = new ConcurrentHashMap<>();
 
     private final Map<String, Set<String>> associationCache = new ConcurrentHashMap<>();
-    private final Map<String, String> entityByTable;
+    private final Map<String, Set<String>> entitiesByTable;
+
+    /** JPQL 엔티티명 -> internal name. @Entity(name=) 값과 단순 클래스명을 모두 색인합니다. */
+    private final Map<String, String> entityByJpqlName;
 
     /**
      * @param reportedEntities {@code ProgramModel.entities()} 가 알려준 엔티티와 임베더블의
@@ -50,7 +54,8 @@ public final class EntityIndex {
         this.classes = classes;
         // Set.copyOf 는 JVM 기동마다 순회 순서가 달라집니다. 삽입 순서를 보존합니다.
         this.entities = Collections.unmodifiableSet(new LinkedHashSet<>(reportedEntities));
-        this.entityByTable = buildTableIndex();
+        this.entitiesByTable = buildTableIndex();
+        this.entityByJpqlName = buildNameIndex();
     }
 
     public boolean isEntity(String internalName) {
@@ -110,14 +115,53 @@ public final class EntityIndex {
         });
     }
 
-    public Optional<String> entityForTable(String tableName) {
+    /**
+     * 이 테이블명 후보로 등록된 엔티티 전체입니다.
+     *
+     * <p>서로 다른 엔티티가 같은 테이블명 후보를 만들 수 있습니다(예: Postgres 예약어를
+     * 피하려고 {@code @Table(name = "user")} 를 붙인 엔티티와, 기본값이 우연히 같은 이름이
+     * 되는 다른 엔티티). 어느 한쪽만 돌려주면 밀린 쪽의 무효화가 통째로 누락되므로, 충돌
+     * 시 양쪽을 다 돌려줍니다. 누락을 금지하는 전역 원칙에 따른 과잉 방향입니다.
+     */
+    public Set<String> entitiesForTable(String tableName) {
         if (tableName == null) {
-            return Optional.empty();
+            return Set.of();
         }
-        String direct = entityByTable.get(tableName);
+        Set<String> direct = entitiesByTable.get(tableName);
         return direct != null
-            ? Optional.of(direct)
-            : Optional.ofNullable(entityByTable.get(tableName.toLowerCase(Locale.ROOT)));
+            ? direct
+            : entitiesByTable.getOrDefault(tableName.toLowerCase(Locale.ROOT), Set.of());
+    }
+
+    /** JPQL 이 쓰는 엔티티명으로 엔티티를 찾습니다. */
+    public Optional<String> entityByName(String jpqlEntityName) {
+        return Optional.ofNullable(entityByJpqlName.get(jpqlEntityName));
+    }
+
+    /**
+     * 이 엔티티의 특정 필드가 가리키는 연관 대상 엔티티입니다.
+     *
+     * <p>연관 어노테이션이 있는 필드만 봅니다. JPQL 의 {@code JOIN} 대상은 항상 실제 연관이어야
+     * 하므로(그렇지 않으면 JPA 구현체가 쿼리 자체를 거부합니다) 유효한 JPQL 을 놓치지
+     * 않으면서도, 연관이 아닌 필드가 우연히 엔티티 타입이어서 잘못 연관으로 잡히는 경우를
+     * 막습니다.
+     */
+    public Set<String> associationTargets(String entityInternalName, String fieldName) {
+        List<String> hierarchy = new ArrayList<>();
+        hierarchy.add(entityInternalName);
+        hierarchy.addAll(classes.supertypesOf(entityInternalName));
+        for (String current : hierarchy) {
+            Optional<Set<String>> found = classes.facts(current)
+                .flatMap(facts -> facts.fields().stream()
+                    .filter(field -> field.name().equals(fieldName) && isAssociation(field))
+                    .findFirst())
+                .map(this::associationTargets)
+                .filter(targets -> !targets.isEmpty());
+            if (found.isPresent()) {
+                return found.get();
+            }
+        }
+        return Set.of();
     }
 
     /**
@@ -237,23 +281,23 @@ public final class EntityIndex {
     }
 
     /**
-     * 테이블명에서 엔티티로 가는 조회 표를 만듭니다.
+     * 테이블명에서 엔티티 집합으로 가는 조회 표를 만듭니다.
      *
      * <p>{@code @Table(name=)} 이 있는 엔티티를 먼저 전부 등록하고, 그 다음에 {@code @Table}
-     * 이 없는 엔티티의 기본값을 등록합니다. 그래야 다른 엔티티의 기본값이 어떤 엔티티의
-     * 명시적인 {@code @Table} 값을 밀어내지 않습니다 — 개발자가 선언한 사실이 추정값보다
-     * 우선해야 합니다.
+     * 이 없는 엔티티의 기본값을 등록합니다. 두 단계 모두 같은 테이블명 후보에 여러 엔티티가
+     * 몰리면 {@link #registerTableName} 이 그 후보 아래에 전부 추가합니다 — 어느 한쪽만
+     * 밀어내면 밀린 쪽의 무효화가 통째로 누락되기 때문입니다.
      *
      * <p>두 단계 모두 엔티티 이름을 정렬해서 훑습니다. {@code entities} 는 호출자가 넘긴
      * {@code Set} 의 순회 순서를 그대로 물려받는데, 그 순서는 JVM 기동마다 달라질 수
-     * 있습니다. 정렬하지 않으면 같은 테이블명 후보가 겹치는 두 엔티티 중 어느 쪽이
-     * 이기는지가 실행마다 달라집니다.
+     * 있습니다. 등록은 순서와 무관하게 합집합이라 최종 결과는 정렬 없이도 같지만, 다른
+     * 내부 상태의 재현성을 위해 정렬을 유지합니다.
      */
-    private Map<String, String> buildTableIndex() {
+    private Map<String, Set<String>> buildTableIndex() {
         List<String> sortedEntities = new ArrayList<>(entities);
         Collections.sort(sortedEntities);
 
-        Map<String, String> index = new LinkedHashMap<>();
+        Map<String, Set<String>> index = new LinkedHashMap<>();
 
         for (String entity : sortedEntities) {
             explicitTableNameOf(entity).ifPresent(name -> registerTableName(index, entity, name));
@@ -275,8 +319,13 @@ public final class EntityIndex {
             registerTableName(index, entity, camelToSnake(simpleName));
         }
 
+        Map<String, Set<String>> frozen = new LinkedHashMap<>();
+        for (Map.Entry<String, Set<String>> entry : index.entrySet()) {
+            // Set.copyOf 는 JVM 기동마다 순회 순서가 달라집니다. 삽입 순서를 보존합니다.
+            frozen.put(entry.getKey(), Collections.unmodifiableSet(new LinkedHashSet<>(entry.getValue())));
+        }
         // Map.copyOf 는 JVM 기동마다 순회 순서가 달라집니다. 삽입 순서를 보존합니다.
-        return Collections.unmodifiableMap(new LinkedHashMap<>(index));
+        return Collections.unmodifiableMap(new LinkedHashMap<>(frozen));
     }
 
     private Optional<String> explicitTableNameOf(String entity) {
@@ -286,9 +335,29 @@ public final class EntityIndex {
             .filter(name -> !name.isBlank());
     }
 
-    private static void registerTableName(Map<String, String> index, String entity, String tableName) {
-        index.putIfAbsent(tableName, entity);
-        index.putIfAbsent(tableName.toLowerCase(Locale.ROOT), entity);
+    private static void registerTableName(Map<String, Set<String>> index, String entity, String tableName) {
+        index.computeIfAbsent(tableName, key -> new LinkedHashSet<>()).add(entity);
+        index.computeIfAbsent(tableName.toLowerCase(Locale.ROOT), key -> new LinkedHashSet<>()).add(entity);
+    }
+
+    /**
+     * JPQL 엔티티명에서 internal name 으로 가는 조회 표를 만듭니다.
+     *
+     * <p>기본은 단순 클래스명이지만 {@code @Entity(name = ...)} 로 바꿀 수 있습니다. 이
+     * 어노테이션 값이 있어도 단순 클래스명 등록은 그대로 남겨 둡니다 — 두 키가 같은
+     * 엔티티를 가리키므로 해가 없고, 지운다고 다른 엔티티와 충돌이 줄어들지도 않습니다.
+     */
+    private Map<String, String> buildNameIndex() {
+        Map<String, String> index = new LinkedHashMap<>();
+        for (String entity : entities) {
+            index.putIfAbsent(MethodRefs.simpleNameOf(entity), entity);
+            classes.facts(entity)
+                .map(facts -> facts.annotation(ENTITY))
+                .flatMap(values -> values.string("name"))
+                .filter(name -> !name.isBlank())
+                .ifPresent(name -> index.put(name, entity));
+        }
+        return Collections.unmodifiableMap(new LinkedHashMap<>(index));
     }
 
     /**
