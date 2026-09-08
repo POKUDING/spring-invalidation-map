@@ -57,6 +57,14 @@ class SqlTableExtractorTest {
     }
 
     @Test
+    void entities_impliedJoinCommaSeparatedFrom_resolvesBothTables() {
+        // 쉼표로 나열한 암묵적 FROM 목록입니다. 토큰화 단계에서 쉼표가 사라지므로, from
+        // 바로 다음 토큰만 보는 구현은 둘째 테이블(trip_leg)을 놓칩니다.
+        assertThat(SqlTableExtractor.entities("select * from trip_log a, trip_leg b", entities))
+            .containsExactlyInAnyOrder(TRIP, LEG);
+    }
+
+    @Test
     void entities_collidingTableName_resolvesBothEntities() {
         // entitiesForTable 이 과잉 방향으로 양쪽을 다 돌려주므로, 여기서도 한쪽만 취하지
         // 않고 둘 다 결과에 담겨야 합니다.

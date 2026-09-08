@@ -56,6 +56,29 @@ class JpqlEntityExtractorTest {
     }
 
     @Test
+    void entities_joinOnUndefinedAlias_isIgnored() {
+        // "x" 는 FROM 절에서 등록된 별칭이 아닙니다. owner 조회가 실패하는 경로(별칭 자체를
+        // 모르는 경우)는 필드를 못 찾는 경로(entities_unresolvableAssociationPath_isIgnored)
+        // 와 다른 분기입니다.
+        assertThat(extract("select t from Trip t join x.legs l where l.id = :id")).containsExactly(TRIP);
+    }
+
+    @Test
+    void entities_joinFetch_resolvesJoinTarget() {
+        // JOIN FETCH 는 즉시 로딩 힌트를 더한 것뿐, 대상은 JOIN 과 같습니다. FETCH 를
+        // 건너뛰지 않으면 target 이 "fetch" 가 되어 TripLeg 을 통째로 놓칩니다.
+        assertThat(extract("select t from Trip t join fetch t.legs l where l.id = :id"))
+            .containsExactlyInAnyOrder(TRIP, LEG);
+    }
+
+    @Test
+    void entities_leftJoinFetch_resolvesJoinTarget() {
+        // LEFT 는 join 키워드 판정에 걸리지 않으므로 자연히 통과해야 합니다.
+        assertThat(extract("select t from Trip t left join fetch t.legs l"))
+            .containsExactlyInAnyOrder(TRIP, LEG);
+    }
+
+    @Test
     void entities_customEntityAnnotationName_resolvesByAnnotationNameNotClassName() {
         // RenamedEntity 의 클래스명이 아니라 @Entity(name = "LegacyBooking") 값으로 찾습니다.
         // entityByName 이 클래스명만 색인하면 이 토큰은 풀리지 않고 결과가 비게 됩니다.
@@ -76,6 +99,12 @@ class JpqlEntityExtractorTest {
     @Test
     void kindOf_deleteStatement_isWrite() {
         assertThat(JpqlEntityExtractor.kindOf("DELETE FROM Trip t")).isEqualTo(AccessKind.WRITE);
+    }
+
+    @Test
+    void kindOf_insertStatement_isWrite() {
+        assertThat(JpqlEntityExtractor.kindOf("insert into Trip (title) values (:title)"))
+            .isEqualTo(AccessKind.WRITE);
     }
 
     private Set<String> extract(String jpql) {
