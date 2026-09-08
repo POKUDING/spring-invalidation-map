@@ -109,13 +109,14 @@ class ClassRepositoryTest {
         ClassRepository corrupt = new ClassRepository(new CorruptBytesProgramModel());
         corrupt.facts("broken/Class");
         assertThat(corrupt.unreadableClasses()).containsOnlyKeys("broken/Class");
-        assertThat(corrupt.unreadableClasses().get("broken/Class")).isNotBlank();
+        assertThat(corrupt.unreadableClasses().get("broken/Class")).isNotBlank().doesNotContain("null");
     }
 
     @Test
     void unreadableClasses_beforeAnyReadFailure_isEmpty() {
-        // 읽기 실패가 없으면 기록도 없어야 합니다. 실패 여부와 무관하게 항상 값을 채우는
-        // 구현이라면 이 테스트가 깨집니다.
+        // 성공하는 읽기를 먼저 시킵니다. 읽기 자체를 한 번도 하지 않으면, 실패 여부와
+        // 무관하게 항상 값을 채우는 구현도(채울 기회가 없어서) 이 테스트를 통과시킵니다.
+        classes.facts(MethodRefs.internalNameOf(TypedChild.class));
         assertThat(classes.unreadableClasses()).isEmpty();
     }
 

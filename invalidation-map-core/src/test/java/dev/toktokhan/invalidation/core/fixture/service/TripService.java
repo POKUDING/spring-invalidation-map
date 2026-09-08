@@ -10,6 +10,7 @@ public class TripService {
 
     private TripPort port;
     private ApplicationEventPublisher publisher;
+    private TransactionalWorker transactionalWorker;
 
     @Transactional
     public void write(String title) {
@@ -66,6 +67,14 @@ public class TripService {
         publisher.publishEvent(new TripArchivedEvent());
     }
 
+    /**
+     * 파라미터로 받은 이벤트를 그대로 재발행합니다. 이 메서드 본문에는 {@code NEW} 명령이
+     * 없으므로(이벤트는 호출한 쪽에서 만들었습니다) 이벤트 타입을 식별하지 못합니다.
+     */
+    public void republishEvent(Object event) {
+        publisher.publishEvent(event);
+    }
+
     /** 순환 호출입니다. 종료해야 합니다. */
     public void loopA() {
         loopB();
@@ -78,5 +87,24 @@ public class TripService {
     /** 트랜잭션 밖입니다. */
     public void noTransaction(String title) {
         port.store(title);
+    }
+
+    /**
+     * 트랜잭션 메서드({@code write})와 비트랜잭션 메서드({@code noTransaction})가 같은
+     * 공통 경로({@code port.store} → {@code deepest})로 내려갑니다. 방문 표시가 트랜잭션
+     * 상태를 무시하면 둘 중 먼저 처리된 쪽의 상태만 남고 나머지는 버려집니다.
+     */
+    public void mixedOrder(String title) {
+        write(title);
+        noTransaction(title);
+    }
+
+    /**
+     * 클래스 레벨 {@code @Transactional} 이 상속된 메서드에도 적용되는지 확인합니다.
+     * {@link TransactionalWorker#doWork} 는 오버라이드 없이 {@link AbstractTransactionalWorker}
+     * 에 선언돼 있으므로, 어노테이션 조회가 선언 클래스가 아니라 수신 타입에서 시작해야 합니다.
+     */
+    public void callTransactionalWorker(String title) {
+        transactionalWorker.doWork(title);
     }
 }

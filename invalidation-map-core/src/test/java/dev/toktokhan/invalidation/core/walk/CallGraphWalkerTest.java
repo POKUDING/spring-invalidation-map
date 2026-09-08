@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.toktokhan.invalidation.core.MethodRef;
 import dev.toktokhan.invalidation.core.MethodRefs;
 import dev.toktokhan.invalidation.core.fixture.event.TripEventListeners;
+import dev.toktokhan.invalidation.core.fixture.service.AbstractTransactionalWorker;
 import dev.toktokhan.invalidation.core.fixture.service.TripPort;
 import dev.toktokhan.invalidation.core.fixture.service.TripPortAdapter;
 import dev.toktokhan.invalidation.core.fixture.service.TripService;
@@ -12,9 +13,9 @@ import dev.toktokhan.invalidation.core.index.ClassRepository;
 import dev.toktokhan.invalidation.core.index.ListenerIndex;
 import dev.toktokhan.invalidation.core.support.FakeProgramModel;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import org.junit.jupiter.api.Test;
 
 class CallGraphWalkerTest {
@@ -31,7 +32,7 @@ class CallGraphWalkerTest {
         List.of(BASE), 20_000);
 
     private final List<MethodRef> seen = new ArrayList<>();
-    private final Map<MethodRef, WalkState> stateAt = new ConcurrentHashMap<>();
+    private final Map<MethodRef, WalkState> stateAt = new LinkedHashMap<>();
     private final WalkVisitor visitor = (callee, state) -> {
         seen.add(callee);
         stateAt.put(callee, state);
@@ -40,10 +41,7 @@ class CallGraphWalkerTest {
     @Test
     void walk_callThroughInterface_reachesImplementationBody() {
         walker.walk(ref("write"), visitor);
-        assertThat(seen).anySatisfy(callee -> {
-            assertThat(callee.owner()).isEqualTo(MethodRefs.internalNameOf(TripPortAdapter.class));
-            assertThat(callee.name()).isEqualTo("deepest");
-        });
+        assertThat(seen).contains(program.ref(TripPortAdapter.class, "deepest"));
     }
 
     @Test
@@ -87,8 +85,7 @@ class CallGraphWalkerTest {
     @Test
     void walk_publishEvent_followsListenerBody() {
         walker.walk(ref("publish"), visitor);
-        assertThat(seen).anySatisfy(callee ->
-            assertThat(callee.owner()).isEqualTo(MethodRefs.internalNameOf(TripEventListeners.class)));
+        assertThat(seen).contains(program.ref(TripEventListeners.class, "onTripEvent"));
     }
 
     @Test
@@ -96,10 +93,16 @@ class CallGraphWalkerTest {
         // TripArchivedEvent 는 ApplicationEvent 를 상속하지 않는 순수 POJO 입니다.
         // 이벤트 후보를 ApplicationEvent 하위로 걸러내는 구현이라면 이 리스너까지 닿지 못합니다.
         walker.walk(ref("publishArchivedEvent"), visitor);
-        assertThat(seen).anySatisfy(callee -> {
-            assertThat(callee.owner()).isEqualTo(MethodRefs.internalNameOf(TripEventListeners.class));
-            assertThat(callee.name()).isEqualTo("onArchivedByClasses");
-        });
+        assertThat(seen).contains(program.ref(TripEventListeners.class, "onArchivedByClasses"));
+    }
+
+    @Test
+    void walk_publishEventWithoutNewInstruction_reportsUnresolved() {
+        // republishEvent 는 파라미터로 받은 이벤트를 그대로 재발행합니다. NEW 명령이 없어
+        // newTypes 가 비므로 이벤트 타입을 식별하지 못합니다. 이 한계를 조용히 넘기지 않고
+        // unresolved 에 남겨야 합니다.
+        WalkResult result = walker.walk(ref("republishEvent"), visitor);
+        assertThat(result.unresolved()).anySatisfy(reason -> assertThat(reason).contains("republishEvent"));
     }
 
     @Test
@@ -125,11 +128,35 @@ class CallGraphWalkerTest {
 
     @Test
     void walk_bodyOutsideBasePackages_isVisitedButNotDescended() {
-        walker.walk(ref("insideLambda"), visitor);
+        WalkResult result = walker.walk(ref("insideLambda"), visitor);
         // JDK 호출은 방문 목록에 있지만 본문으로 내려가지 않습니다.
         assertThat(seen).anySatisfy(callee -> assertThat(callee.owner()).startsWith("java/"));
-        assertThat(walker.walk(ref("insideLambda"), visitor).unresolved())
-            .noneSatisfy(reason -> assertThat(reason).contains("java/util"));
+        // 기준 패키지 밖으로 내려가면 JDK 호출 그래프가 통째로 딸려 들어와 방문 수가 폭발합니다.
+        // insideLambda 의 정상 방문 집합은 insideLambda, lambda$insideLambda$0, TripPort.store,
+        // TripPortAdapter.store, deepest 다섯 개뿐이므로 10 이면 충분히 여유가 있습니다.
+        assertThat(result.visitedMethods()).isLessThan(10);
+        assertThat(result.unresolved()).isEmpty();
+    }
+
+    @Test
+    void walk_sameMethodReachedWithDifferentTransactionStates_reportsEachStateSeparately() {
+        // write(트랜잭션) 를 먼저, noTransaction(트랜잭션 밖) 을 나중에 부릅니다. 방문 표시가
+        // 상태를 무시하면 스택(LIFO)상 나중에 push 된 noTransaction 쪽이 먼저 처리되어
+        // deepest 를 tx=false 로 선점하고, 나중에 처리되는 write 쪽 상태(tx=true)는 버려집니다.
+        walker.walk(ref("mixedOrder"), visitor);
+        MethodRef deepest = program.ref(TripPortAdapter.class, "deepest");
+        assertThat(stateAt.get(deepest).inTransaction()).isTrue();
+    }
+
+    @Test
+    void walk_classLevelTransactionalDeclaredOnReceiverType_marksInheritedMethodInTransaction() {
+        // TransactionalWorker#doWork 는 상위 클래스(AbstractTransactionalWorker)에 선언돼
+        // 있어 resolveMethod 가 돌려주는 MethodFacts.ref().owner() 는 그 상위 클래스입니다.
+        // 클래스 레벨 @Transactional 조회가 그 선언 클래스에서만 이뤄지면(수신 타입인
+        // TransactionalWorker 를 보지 않으면) 이 어노테이션을 찾지 못합니다.
+        walker.walk(ref("callTransactionalWorker"), visitor);
+        MethodRef touch = program.ref(AbstractTransactionalWorker.class, "touch");
+        assertThat(stateAt.get(touch).inTransaction()).isTrue();
     }
 
     private MethodRef ref(String methodName) {
