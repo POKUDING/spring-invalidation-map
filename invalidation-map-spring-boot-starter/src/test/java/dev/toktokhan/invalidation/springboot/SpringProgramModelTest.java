@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.toktokhan.invalidation.core.Endpoint;
 import dev.toktokhan.invalidation.core.MethodRef;
 import dev.toktokhan.invalidation.core.MethodRefs;
+import dev.toktokhan.invalidation.springboot.app.DeepEntity;
+import dev.toktokhan.invalidation.springboot.app.DeepFragment;
 import dev.toktokhan.invalidation.springboot.app.Note;
 import dev.toktokhan.invalidation.springboot.app.NoteController;
 import dev.toktokhan.invalidation.springboot.app.NoteCreatedEvent;
@@ -105,6 +107,20 @@ class SpringProgramModelTest {
     void entityFor_legacyNamedFragmentInterface_resolvesEntity() {
         assertThat(model.entityFor(MethodRefs.internalNameOf(SlotInstanceRepositoryCustom.class)))
             .contains(MethodRefs.internalNameOf(SlotInstance.class));
+    }
+
+    /**
+     * {@code @NoRepositoryBean} 베이스 리포지토리 인터페이스({@code DeepBaseRepository})가
+     * 프래그먼트 인터페이스({@code DeepFragment})를 직접 선언하고, 실제 리포지토리 인터페이스
+     * ({@code DeepRepository})는 그 베이스를 상속만 하는 구조입니다. {@code getInterfaces()}
+     * 는 직접 선언만 돌려주므로, 상위 인터페이스까지 전이적으로 훑어야만 통과합니다(리뷰
+     * 라운드 2, R1). Spring Data 표준 관용구라 pirl-spring 이 지금 이 패턴을 쓰지 않아도
+     * 이 라이브러리의 계약(ProgramModel.entityFor)이 지켜야 하는 경우입니다.
+     */
+    @Test
+    void entityFor_transitivelyInheritedFragmentInterface_resolvesEntity() {
+        assertThat(model.entityFor(MethodRefs.internalNameOf(DeepFragment.class)))
+            .contains(MethodRefs.internalNameOf(DeepEntity.class));
     }
 
     @Test
