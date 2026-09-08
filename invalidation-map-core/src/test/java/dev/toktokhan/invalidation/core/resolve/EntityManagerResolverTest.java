@@ -9,6 +9,7 @@ import dev.toktokhan.invalidation.core.MethodRefs;
 import dev.toktokhan.invalidation.core.fixture.entity.Trip;
 import dev.toktokhan.invalidation.core.fixture.entity.TripLeg;
 import dev.toktokhan.invalidation.core.fixture.repo.EntityManagerRepository;
+import dev.toktokhan.invalidation.core.fixture.repo.ExtendedEntityManager;
 import dev.toktokhan.invalidation.core.index.ClassRepository;
 import dev.toktokhan.invalidation.core.index.EntityIndex;
 import dev.toktokhan.invalidation.core.index.RepositoryIndex;
@@ -21,6 +22,7 @@ import org.junit.jupiter.api.Test;
 class EntityManagerResolverTest {
 
     private static final String ENTITY_MANAGER = "jakarta/persistence/EntityManager";
+    private static final String EXTENDED_ENTITY_MANAGER = MethodRefs.internalNameOf(ExtendedEntityManager.class);
     private static final String REPO = MethodRefs.internalNameOf(EntityManagerRepository.class);
     private static final String TRIP = MethodRefs.internalNameOf(Trip.class);
     private static final String LEG = MethodRefs.internalNameOf(TripLeg.class);
@@ -77,6 +79,26 @@ class EntityManagerResolverTest {
         assertThat(resolveIn("queryTwoEntities",
             new MethodRef(ENTITY_MANAGER, "createQuery", "(Ljava/lang/String;)Ljakarta/persistence/Query;")))
             .contains(new EntityAccess(Set.of(TRIP, LEG), AccessKind.READ));
+    }
+
+    @Test
+    void resolve_callerWithMixedReadAndWriteQueries_promotesToWrite() {
+        // 후보 중 하나(select)는 READ, 다른 하나(update)는 WRITE 입니다. 하나라도 WRITE 면
+        // 전체가 WRITE 로 승격되어야 합니다. 마지막 후보만 반영하거나 첫 후보의 방향을
+        // 그대로 쓰는 구현에서는 이 단정이 깨집니다.
+        assertThat(resolveIn("queryMixedDirections",
+            new MethodRef(ENTITY_MANAGER, "createQuery", "(Ljava/lang/String;)Ljakarta/persistence/Query;")))
+            .contains(new EntityAccess(Set.of(TRIP, LEG), AccessKind.WRITE));
+    }
+
+    @Test
+    void resolve_entityManagerSubtype_isTreatedAsEntityManager() {
+        // owner 가 jakarta/persistence/EntityManager 리터럴이 아니라 그 서브타입
+        // (ExtendedEntityManager)이어도 isSubtypeOf 로 인정되어야 합니다. owner 리터럴
+        // equals 만 하는 구현에서는 이 단정이 깨집니다.
+        assertThat(resolveIn("load",
+            new MethodRef(EXTENDED_ENTITY_MANAGER, "createQuery", "(Ljava/lang/String;)Ljakarta/persistence/Query;")))
+            .contains(new EntityAccess(Set.of(TRIP), AccessKind.READ));
     }
 
     private Optional<EntityAccess> resolveIn(String callerMethodName, MethodRef callee) {

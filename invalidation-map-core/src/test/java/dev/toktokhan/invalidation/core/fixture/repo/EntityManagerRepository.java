@@ -37,4 +37,13 @@ public class EntityManagerRepository {
         em.createQuery("select t from Trip t");
         em.createQuery("select l from TripLeg l");
     }
+
+    /**
+     * 후보 중 하나는 READ, 다른 하나는 WRITE 인 픽스처입니다. 전체 방향이 WRITE 로
+     * 승격되는지 검증하는 데 씁니다.
+     */
+    public void queryMixedDirections() {
+        em.createQuery("select t from Trip t");
+        em.createQuery("update TripLeg l set l.id = l.id");
+    }
 }

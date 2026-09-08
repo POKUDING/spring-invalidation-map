@@ -40,4 +40,18 @@ public class QuerydslRepository {
         QTripDto dto = new QTripDto();
         return dto.toString();
     }
+
+    /**
+     * 같은 메서드 안에 Q클래스 참조와 엔티티 변경자 호출이 함께 있는 픽스처입니다.
+     * QuerydslResolver 가 caller 안의 Q클래스 참조만으로 다른 호출까지 가로채면(게이트
+     * 없이 caller 전체 스캔만 하면), {@code trip.rename(...)} 호출 지점까지 QueryDSL
+     * 접근으로 잘못 판정해 DirtyCheckResolver 가 그 호출을 영원히 못 보게 됩니다.
+     */
+    public void renameIfStale(Trip trip, String newTitle) {
+        QTrip qtrip = new QTrip();
+        boolean stale = qtrip.toString().isEmpty();
+        if (stale) {
+            trip.rename(newTitle);
+        }
+    }
 }
