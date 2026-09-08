@@ -34,11 +34,26 @@ public final class InvalidationMapAnalyzer {
 
     // 설계 문서 4.2절 순서입니다. 처음 값을 돌려준 리졸버가 이깁니다(first-match-wins) —
     // 순서를 바꾸면 판정이 달라질 수 있습니다.
+    //
+    // 지금은 네 리졸버가 callee.owner() 기준으로 서로소입니다(리포지토리 / EntityManager
+    // 하위 타입 / QueryDSL 패키지·Q클래스 / 엔티티). 그래서 이 순서를 바꿔도 지금 픽스처의
+    // 결과는 달라지지 않고, 그 말은 행동 기반 테스트로는 이 순서 계약을 지킬 수 없다는
+    // 뜻이기도 합니다. 그래서 resolverOrder() 로 상수 자체를 노출해 테스트가 순서를 직접
+    // 단정합니다. **겹치는 owner 를 다루는 리졸버가 추가되면(예: 같은 타입을 리포지토리이자
+    // 엔티티로 함께 다루는 리졸버) 이 서로소 성질이 깨지고 순서 의존이 되살아납니다.**
     private static final List<EntityResolver> RESOLVERS = List.of(
         new JpaRepositoryResolver(),
         new EntityManagerResolver(),
         new QuerydslResolver(),
         new DirtyCheckResolver());
+
+    /**
+     * 리졸버 체인 순서입니다. 테스트가 이 상수 자체를 단정해 설계 문서 4.2절의 순서를
+     * 코드로 지킵니다(위 {@link #RESOLVERS} 주석 참고).
+     */
+    static List<Class<? extends EntityResolver>> resolverOrder() {
+        return RESOLVERS.stream().map(EntityResolver::getClass).toList();
+    }
 
     public InvalidationMap analyze(ProgramModel program, AnalyzerOptions options) {
         ClassRepository classes = new ClassRepository(program);
@@ -51,6 +66,11 @@ public final class InvalidationMapAnalyzer {
         Map<MethodRef, EndpointEntities> result = new LinkedHashMap<>();
         for (Endpoint endpoint : program.endpoints()) {
             MethodRef handler = endpoint.handler();
+            if (result.containsKey(handler)) {
+                // 한 핸들러에 경로나 HTTP 메서드가 여러 개 붙은 매핑입니다(InvalidationMap
+                // javadoc 참고). 이미 걸었으므로 같은 호출 사슬을 다시 걷지 않습니다.
+                continue;
+            }
             if (annotationOn(classes, handler, IGNORE).isPresent()) {
                 continue;
             }
@@ -127,6 +147,10 @@ public final class InvalidationMapAnalyzer {
         annotationOn(classes, handler, annotationDescriptor).ifPresent(values -> {
             List<String> declared = values.strings("value");
             if (declared.isEmpty()) {
+                // value 가 비어 있으면 override 여도 아무것도 하지 않고 그대로 둡니다.
+                // "분석 결과가 틀렸으니 비운다" 를 이걸로 선언할 수는 없지만, 과잉 방향이라
+                // 4.4 원칙 위반은 아닙니다 — 사라져야 할 엔티티가 남는 것이지, 있어야 할
+                // 엔티티가 누락되는 게 아닙니다.
                 return;
             }
             if (values.bool("override", false)) {
@@ -137,25 +161,41 @@ public final class InvalidationMapAnalyzer {
     }
 
     /**
-     * 핸들러 자신과 상위 타입에서 같은 이름·디스크립터 메서드의 어노테이션을 찾습니다.
+     * 핸들러 자신과 상위 타입에서 같은 이름·파라미터의 메서드의 어노테이션을 찾습니다.
      *
      * <p>문서 어노테이션을 인터페이스에 붙이는 프로젝트를 지원하기 위함입니다. 코어는 Spring 의
      * {@code AnnotatedElementUtils} 를 쓸 수 없으므로 직접 올라갑니다.
+     *
+     * <p>반환 타입은 비교하지 않습니다. 공변 반환 재정의(인터페이스는 {@code Object} 를,
+     * 구현은 더 좁은 타입을 반환)는 반환 타입만 달라도 JVM 디스크립터 전체가 달라지므로,
+     * 전체 디스크립터로 비교하면 인터페이스의 어노테이션을 놓칩니다(누락 방향이라
+     * 4.4 원칙 위반). 이름과 파라미터가 같고 반환 타입만 다른 메서드 두 개는 같은
+     * 클래스 안에 존재할 수 없으므로(자바 문법상 금지) 모호하지 않습니다.
      */
     private Optional<AnnotationValues> annotationOn(ClassRepository classes, MethodRef handler,
         String annotationDescriptor) {
         List<String> candidates = new ArrayList<>();
         candidates.add(handler.owner());
         candidates.addAll(classes.supertypesOf(handler.owner()));
+        String parameters = parameterDescriptorOf(handler.descriptor());
         for (String owner : candidates) {
-            Optional<AnnotationValues> found = classes
-                .methodFacts(new MethodRef(owner, handler.name(), handler.descriptor()))
-                .map(facts -> facts.annotations().get(annotationDescriptor));
+            Optional<AnnotationValues> found = classes.facts(owner)
+                .flatMap(classFacts -> classFacts.methods().stream()
+                    .filter(method -> method.ref().name().equals(handler.name())
+                        && parameterDescriptorOf(method.ref().descriptor()).equals(parameters))
+                    .findFirst())
+                .map(methodFacts -> methodFacts.annotations().get(annotationDescriptor));
             if (found.isPresent()) {
                 return found;
             }
         }
         return Optional.empty();
+    }
+
+    /** 디스크립터에서 파라미터 부분만 남깁니다({@code )} 까지). 반환 타입은 버립니다. */
+    private static String parameterDescriptorOf(String descriptor) {
+        int closingParen = descriptor.indexOf(')');
+        return descriptor.substring(0, closingParen + 1);
     }
 
     private static EndpointEntities withReasons(EndpointEntities value, List<String> reasons) {

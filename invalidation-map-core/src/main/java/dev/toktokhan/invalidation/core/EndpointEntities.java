@@ -14,8 +14,4 @@ public record EndpointEntities(Set<String> reads, Set<String> writes, List<Strin
     public boolean resolved() {
         return unresolved.isEmpty();
     }
-
-    public boolean isEmpty() {
-        return reads.isEmpty() && writes.isEmpty();
-    }
 }
