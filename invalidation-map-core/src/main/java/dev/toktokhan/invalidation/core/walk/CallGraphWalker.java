@@ -131,8 +131,19 @@ public final class CallGraphWalker {
     /**
      * 이 호출로 내려갈 대상입니다.
      *
-     * <p>호출 대상 자신과 구현체를 모두 넣습니다. 인터페이스 여부를 판정하지 않아도 되는 이유는
-     * 일반 클래스에서 {@code implementationsOf} 가 빈 집합을 돌려주기 때문입니다.
+     * <p>호출 대상 자신은 조건 없이 넣습니다 — 이 자리가 진짜로 읽을 수 없으면 그 자체가
+     * 미해결 사유입니다. 구현체 후보는 실제로 그 메서드를 갖고 있는 것만 넣습니다.
+     *
+     * <p>{@code implementationsOf} 가 인터페이스 하나에 서로 다른 프래그먼트 구현체 여러
+     * 개를 돌려줄 수 있고, 그중 일부는 지금 호출하는 메서드를 갖고 있지 않을 수 있습니다
+     * (예: 리포지토리 인터페이스 하나에 프래그먼트가 여러 개 걸린 경우, 호출부의 정적
+     * 타입이 리포지토리 인터페이스 자체라 프래그먼트 계약을 하나로 좁힐 수 없습니다). 그런
+     * 후보를 조건 없이 넣으면 {@code resolveMethod} 가 실패해 "본문을 읽을 수 없습니다" 가
+     * 붙는데, 이는 실제로 아무것도 잘못되지 않은 상태를 미해결로 오분류하는 것입니다(실측:
+     * 스타터의 {@code SpringProgramModel} 이 리포지토리 인터페이스로 프래그먼트 구현체를
+     * 색인할 때 이 모양으로 재현됨). 후보를 미리 걸러 이 오분류를 막습니다 — 걸러진 후보는
+     * 그냥 이 호출과 무관한 것이므로 조용히 넘어가도 4.4 원칙(누락 금지)을 어기지 않습니다.
+     * 호출 대상 자신(위에서 무조건 추가)이 여전히 진짜 미해결을 보고합니다.
      */
     private Set<MethodRef> descendTargets(MethodRef callee) {
         if (!inBasePackages(callee.owner())) {
@@ -141,7 +152,10 @@ public final class CallGraphWalker {
         Set<MethodRef> targets = new LinkedHashSet<>();
         targets.add(callee);
         for (String implementation : program.implementationsOf(callee.owner())) {
-            targets.add(new MethodRef(implementation, callee.name(), callee.descriptor()));
+            MethodRef candidate = new MethodRef(implementation, callee.name(), callee.descriptor());
+            if (classes.resolveMethod(candidate).isPresent()) {
+                targets.add(candidate);
+            }
         }
         return targets;
     }
