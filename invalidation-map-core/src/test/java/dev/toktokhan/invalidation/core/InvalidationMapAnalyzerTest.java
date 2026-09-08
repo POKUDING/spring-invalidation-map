@@ -17,9 +17,15 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.objectweb.asm.AnnotationVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
 
 class InvalidationMapAnalyzerTest {
 
@@ -28,6 +34,10 @@ class InvalidationMapAnalyzerTest {
     private static final String LEG = MethodRefs.internalNameOf(TripLeg.class);
     private static final String COORDINATE = MethodRefs.internalNameOf(Coordinate.class);
     private static final String TRIP_JPA_REPOSITORY = MethodRefs.internalNameOf(TripJpaRepository.class);
+    private static final String BRIDGE_FIRST_HANDLER =
+        "dev/toktokhan/invalidation/core/fixture/synthetic/BridgeFirstHandler";
+    private static final String READS_ENTITIES_DESCRIPTOR =
+        "Ldev/toktokhan/invalidation/core/annotation/ReadsEntities;";
 
     private final FakeProgramModel program = FakeProgramModel.create()
         .withEndpoint("GET", "/trips/{title}", TripController.class, "read", String.class)
@@ -141,6 +151,31 @@ class InvalidationMapAnalyzerTest {
             .forHandler(readWithCovariantReturnRef()).orElseThrow();
 
         assertThat(entities.reads()).containsExactlyInAnyOrder(TRIP, COORDINATE);
+    }
+
+    @Test
+    void analyze_readsEntitiesOnOwnMethodWithBridgeFirst_isStillFound() {
+        // 공변 반환 재정의를 컴파일하면 컴파일러가 synthetic 브릿지 메서드를 실제 메서드와
+        // 함께 만듭니다 — 이름·파라미터가 같고 반환 타입만 다른 메서드 쌍이 같은 클래스에
+        // 생깁니다. 이 저장소의 javac 는 실제 메서드를 브릿지보다 먼저 배치하지만(위
+        // readWithCovariantReturn 테스트가 통과하는 이유), 그 순서는 JVMS 에 없는 컴파일러
+        // 구현 세부사항이라 javac 로 컴파일한 픽스처로는 "브릿지가 먼저 오면 annotationOn
+        // 이 어떻게 반응하는가" 를 결정적으로 재현할 수 없습니다 — 어느 javac 버전을 쓰든
+        // 우리가 순서를 고를 수 없기 때문입니다. 그래서 ASM ClassWriter 로 브릿지를 실제
+        // 메서드보다 먼저 visitMethod 하는 클래스를 직접 합성해, 컴파일러 버전과 무관하게
+        // 이 경로를 결정적으로 재현합니다. 어노테이션은 실제 메서드에만 붙입니다 — 브리프가
+        // 지원을 약속하는 "핸들러 자신" 탐색 경로를 검증합니다(인터페이스가 아님).
+        byte[] classBytes = synthesizeBridgeFirstClass();
+        MethodRef handler = new MethodRef(BRIDGE_FIRST_HANDLER, "read",
+            "(Ljava/lang/String;)L" + TRIP + ";");
+        ProgramModel synthetic = new SingleClassProgramModel(
+            List.of(new Endpoint("GET", "/synthetic", handler)),
+            Map.of(BRIDGE_FIRST_HANDLER, classBytes));
+
+        EndpointEntities entities = analyzer.analyze(synthetic, options(false))
+            .forHandler(handler).orElseThrow();
+
+        assertThat(entities.reads()).containsExactly(COORDINATE);
     }
 
     @Test
@@ -281,6 +316,91 @@ class InvalidationMapAnalyzerTest {
 
     private MethodRef readWithCovariantReturnRef() {
         return program.ref(TripController.class, "readWithCovariantReturn", String.class);
+    }
+
+    /**
+     * 브릿지 메서드를 실제 메서드보다 먼저 {@code visitMethod} 하는 클래스를 직접 합성합니다.
+     *
+     * <p>{@code read(String)} 의 실제 메서드는 {@code Trip} 을 반환하고
+     * {@code @ReadsEntities(Coordinate.class)} 를 갖습니다. 브릿지는 상위 타입의 소거된
+     * 시그니처를 흉내 내(반환 타입 {@code Object}) 이름·파라미터가 실제 메서드와 같지만,
+     * 실제로 어떤 상위 타입을 구현하지는 않습니다 — {@code annotationOn} 이 상속 관계가
+     * 아니라 같은 클래스 안의 메서드 목록 순서만으로 후보를 고르는지 보는 것이 목적이라
+     * 상속 관계 자체는 필요 없습니다.
+     */
+    private static byte[] synthesizeBridgeFirstClass() {
+        ClassWriter writer = new ClassWriter(0);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, BRIDGE_FIRST_HANDLER, null,
+            "java/lang/Object", null);
+
+        MethodVisitor constructor = writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+        constructor.visitCode();
+        constructor.visitVarInsn(Opcodes.ALOAD, 0);
+        constructor.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+        constructor.visitInsn(Opcodes.RETURN);
+        constructor.visitMaxs(1, 1);
+        constructor.visitEnd();
+
+        // 브릿지를 먼저 방문합니다. 어노테이션은 없습니다.
+        MethodVisitor bridge = writer.visitMethod(
+            Opcodes.ACC_PUBLIC | Opcodes.ACC_BRIDGE | Opcodes.ACC_SYNTHETIC,
+            "read", "(Ljava/lang/String;)Ljava/lang/Object;", null, null);
+        bridge.visitCode();
+        bridge.visitInsn(Opcodes.ACONST_NULL);
+        bridge.visitInsn(Opcodes.ARETURN);
+        bridge.visitMaxs(1, 2);
+        bridge.visitEnd();
+
+        // 실제 메서드를 나중에 방문합니다. 어노테이션은 여기에만 붙습니다.
+        MethodVisitor real = writer.visitMethod(
+            Opcodes.ACC_PUBLIC, "read", "(Ljava/lang/String;)L" + TRIP + ";", null, null);
+        AnnotationVisitor annotation = real.visitAnnotation(READS_ENTITIES_DESCRIPTOR, true);
+        AnnotationVisitor value = annotation.visitArray("value");
+        value.visit(null, Type.getObjectType(COORDINATE));
+        value.visitEnd();
+        annotation.visitEnd();
+        real.visitCode();
+        real.visitInsn(Opcodes.ACONST_NULL);
+        real.visitInsn(Opcodes.ARETURN);
+        real.visitMaxs(1, 2);
+        real.visitEnd();
+
+        writer.visitEnd();
+        return writer.toByteArray();
+    }
+
+    /**
+     * {@code classesByName} 에 등록된 바이트만 내주는 최소 {@link ProgramModel} 입니다.
+     * {@link #synthesizeBridgeFirstClass()} 처럼 실제 컴파일 산출물이 아닌, 직접 합성한
+     * 클래스를 분석기에 먹이는 데 씁니다.
+     */
+    private record SingleClassProgramModel(List<Endpoint> endpoints, Map<String, byte[]> classesByName)
+        implements ProgramModel {
+
+        @Override
+        public Optional<byte[]> classBytes(String internalName) {
+            return Optional.ofNullable(classesByName.get(internalName));
+        }
+
+        @Override
+        public Optional<String> entityFor(String repositoryInternalName) {
+            return Optional.empty();
+        }
+
+        @Override
+        public Set<String> implementationsOf(String interfaceInternalName) {
+            return Set.of();
+        }
+
+        @Override
+        public Set<String> entities() {
+            return Set.of();
+        }
+
+        @Override
+        public Set<MethodRef> eventListeners() {
+            return Set.of();
+        }
     }
 
     /**
