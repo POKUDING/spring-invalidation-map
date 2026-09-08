@@ -27,6 +27,7 @@
 - **커밋 분리: 구현 커밋을 먼저, 테스트 커밋을 나중에 만듭니다.** 한 커밋에 구현과 테스트를 섞지 않습니다. 각 태스크의 커밋 단계는 `git add` 로 구현 파일만 담아 커밋하고, 이어서 테스트 파일만 담아 커밋합니다.
 - 오차 방향 원칙: **과잉 보고는 허용하고 누락은 허용하지 않습니다.** 판정이 불확실하면 과잉 쪽으로 기울이고, 판정이 불가능하면 누락으로 두지 않고 `unresolved` 에 사유를 남깁니다.
 - 출력하는 모든 집합은 정렬합니다. 정렬하지 않으면 실행마다 순서가 바뀌어 스펙 디프가 흔들립니다.
+- **`Set.copyOf` 와 `Map.copyOf` 를 쓰지 않습니다.** JDK 불변 컬렉션의 순회 순서는 JVM 기동마다 달라지는 값에 좌우되어, 순서가 결과에 드러나는 자리에서 실행마다 다른 답을 냅니다. 대신 `Collections.unmodifiableSet(new LinkedHashSet<>(...))` 와 `Collections.unmodifiableMap(new LinkedHashMap<>(...))` 를 씁니다. `List.copyOf` 는 `List` 가 순서를 보존하므로 그대로 씁니다. 이 규칙에 따라 각 태스크의 코드 블록에는 `java.util.Collections`, `java.util.LinkedHashSet`, `java.util.LinkedHashMap` import 가 필요합니다 — 코드 블록의 import 목록에 없으면 추가하십시오.
 - 문서(README, 주석, 커밋 본문)는 '~습니다'체로 씁니다.
 - 비유를 쓰지 않습니다. 실제로 일어나는 동작을 그대로 씁니다.
 - 커밋 메시지 마지막 줄: `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
@@ -2469,7 +2470,7 @@ Expected: 컴파일 실패. `cannot find symbol: class RepositoryIndex`
 
     @Override
     public Set<MethodRef> eventListeners() {
-        return Set.copyOf(eventListeners);
+        return Collections.unmodifiableSet(new LinkedHashSet<>(eventListeners));
     }
 ```
 
@@ -2619,7 +2620,7 @@ public final class ListenerIndex {
                     }
                 }
             });
-            return Set.copyOf(matched);
+            return Collections.unmodifiableSet(new LinkedHashSet<>(matched));
         });
     }
 
@@ -2637,9 +2638,10 @@ public final class ListenerIndex {
             declared.addAll(facts.annotation(TRANSACTIONAL_EVENT_LISTENER).strings("value"));
         });
         if (!declared.isEmpty()) {
-            return Set.copyOf(declared);
+            return Collections.unmodifiableSet(new LinkedHashSet<>(declared));
         }
-        return Set.copyOf(firstParameterType(listener.descriptor()));
+        return Collections.unmodifiableSet(
+            new LinkedHashSet<>(firstParameterType(listener.descriptor())));
     }
 
     /** 디스크립터의 첫 파라미터가 객체 타입이면 그 internal name 을 돌려줍니다. */
@@ -3007,7 +3009,7 @@ Expected: 컴파일 실패. `cannot find symbol: class CallGraphWalker`
 
     /** 읽지 못한 클래스와 그 사유입니다. 분석기가 미해결 사유로 옮겨 담습니다. */
     public Map<String, String> unreadableClasses() {
-        return Map.copyOf(unreadable);
+        return Collections.unmodifiableMap(new LinkedHashMap<>(unreadable));
     }
 ```
 
@@ -3628,7 +3630,7 @@ Expected: 컴파일 실패. `cannot find symbol: class JpqlEntityExtractor`
                 .filter(name -> !name.isBlank())
                 .ifPresent(name -> index.put(name, entity));
         }
-        return Map.copyOf(index);
+        return Collections.unmodifiableMap(new LinkedHashMap<>(index));
     }
 ```
 
@@ -3774,7 +3776,7 @@ public final class JpqlEntityExtractor {
                 }
             });
         }
-        return Set.copyOf(found);
+        return Collections.unmodifiableSet(new LinkedHashSet<>(found));
     }
 
     /** 대상 뒤에 오는 토큰이 예약어가 아니면 별칭으로 봅니다. {@code AS} 는 건너뜁니다. */
@@ -3852,7 +3854,7 @@ public final class SqlTableExtractor {
             }
             entities.entityForTable(unquote(tokens.get(i + 1))).ifPresent(found::add);
         }
-        return Set.copyOf(found);
+        return Collections.unmodifiableSet(new LinkedHashSet<>(found));
     }
 
     /** 스키마 접두어와 인용 부호를 떼어 냅니다. {@code "public"."trip_log"} -> {@code trip_log} */
@@ -3902,7 +3904,7 @@ public final class JpaRepositoryResolver implements EntityResolver {
 
         if (query.isEmpty()) {
             // 방향을 정할 수 없으면 미루고, 워커가 본문으로 내려가게 합니다.
-            return declaredKind.map(kind -> new EntityAccess(Set.copyOf(found), kind));
+            return declaredKind.map(kind -> new EntityAccess(Collections.unmodifiableSet(new LinkedHashSet<>(found)), kind));
         }
 
         String queryText = query.get();
@@ -3914,7 +3916,7 @@ public final class JpaRepositoryResolver implements EntityResolver {
             found.addAll(JpqlEntityExtractor.entities(queryText, context.entities(), context.classes()));
             kind = declaredKind.orElseGet(() -> JpqlEntityExtractor.kindOf(queryText));
         }
-        return Optional.of(new EntityAccess(Set.copyOf(found), kind));
+        return Optional.of(new EntityAccess(Collections.unmodifiableSet(new LinkedHashSet<>(found)), kind));
     }
 }
 ```
@@ -4164,7 +4166,7 @@ public final class EntityManagerResolver implements EntityResolver {
                 kind = AccessKind.WRITE;
             }
         }
-        return matched ? Optional.of(new EntityAccess(Set.copyOf(found), kind)) : Optional.empty();
+        return matched ? Optional.of(new EntityAccess(Collections.unmodifiableSet(new LinkedHashSet<>(found)), kind)) : Optional.empty();
     }
 
     private static boolean isEntityManager(String owner, ResolutionContext context) {
@@ -4215,7 +4217,7 @@ public final class QuerydslResolver implements EntityResolver {
         if (found.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(new EntityAccess(Set.copyOf(found), kindOf(callee)));
+        return Optional.of(new EntityAccess(Collections.unmodifiableSet(new LinkedHashSet<>(found)), kindOf(callee)));
     }
 
     /** QueryDSL 진입점이 update / delete 가 아니면 읽기입니다. */
@@ -4654,7 +4656,7 @@ public final class InvalidationMapAnalyzer {
                 .toList();
             result.replaceAll((handler, value) -> withReasons(value, reasons));
         }
-        return new InvalidationMap(Map.copyOf(result));
+        return new InvalidationMap(Collections.unmodifiableMap(new LinkedHashMap<>(result)));
     }
 
     private EndpointEntities analyzeEndpoint(MethodRef handler, ClassRepository classes,
@@ -4700,7 +4702,7 @@ public final class InvalidationMapAnalyzer {
         }
         unresolved.sort(String::compareTo);
 
-        return new EndpointEntities(Set.copyOf(reads), Set.copyOf(writes), List.copyOf(unresolved));
+        return new EndpointEntities(Collections.unmodifiableSet(new LinkedHashSet<>(reads)), Collections.unmodifiableSet(new LinkedHashSet<>(writes)), List.copyOf(unresolved));
     }
 
     /** {@code override = true} 면 대체하고, 아니면 더합니다. */
@@ -5012,7 +5014,7 @@ public final class SpringProgramModel implements ProgramModel {
                     }
                 }
             }
-            return Set.copyOf(found);
+            return Collections.unmodifiableSet(new LinkedHashSet<>(found));
         });
     }
 
@@ -5108,8 +5110,8 @@ public final class SpringProgramModel implements ProgramModel {
                         ClassUtils.getUserClass(implementation.getClass()))));
             }
         }
-        this.repositoryEntities = Map.copyOf(byRepository);
-        this.fragmentImplementations = Map.copyOf(byFragment);
+        this.repositoryEntities = Collections.unmodifiableMap(new LinkedHashMap<>(byRepository));
+        this.fragmentImplementations = Collections.unmodifiableMap(new LinkedHashMap<>(byFragment));
     }
 
     /** 엔티티와 임베더블을 모두 넣습니다. @Embedded 값 타입도 응답에 실리기 때문입니다. */
@@ -5118,7 +5120,7 @@ public final class SpringProgramModel implements ProgramModel {
         Metamodel metamodel = entityManagerFactory.getMetamodel();
         metamodel.getEntities().forEach(type -> addJavaType(found, type.getJavaType()));
         metamodel.getEmbeddables().forEach(type -> addJavaType(found, type.getJavaType()));
-        return Set.copyOf(found);
+        return Collections.unmodifiableSet(new LinkedHashSet<>(found));
     }
 
     private static void addJavaType(Set<String> target, Class<?> javaType) {
@@ -5145,7 +5147,7 @@ public final class SpringProgramModel implements ProgramModel {
                 }
             }
         }
-        return Set.copyOf(found);
+        return Collections.unmodifiableSet(new LinkedHashSet<>(found));
     }
 
     /** {@code allowFactoryBeanInit = false} 라 FactoryBean 초기화 부수 효과가 없습니다. */
