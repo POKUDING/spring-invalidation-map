@@ -2,14 +2,19 @@ package dev.toktokhan.invalidation.core.index;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.toktokhan.invalidation.core.Endpoint;
 import dev.toktokhan.invalidation.core.MethodRef;
 import dev.toktokhan.invalidation.core.MethodRefs;
+import dev.toktokhan.invalidation.core.ProgramModel;
 import dev.toktokhan.invalidation.core.fixture.hierarchy.Payload;
 import dev.toktokhan.invalidation.core.fixture.hierarchy.Port;
 import dev.toktokhan.invalidation.core.fixture.hierarchy.PortAdapter;
 import dev.toktokhan.invalidation.core.fixture.hierarchy.TypedBase;
 import dev.toktokhan.invalidation.core.fixture.hierarchy.TypedChild;
 import dev.toktokhan.invalidation.core.support.FakeProgramModel;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class ClassRepositoryTest {
@@ -89,5 +94,62 @@ class ClassRepositoryTest {
             .get()
             .satisfies(facts -> assertThat(facts.ref().owner())
                 .isEqualTo(MethodRefs.internalNameOf(TypedBase.class)));
+    }
+
+    @Test
+    void facts_classBytesUnreadableByAsm_returnsEmptyInsteadOfThrowing() {
+        // ASM 이 헤더조차 못 읽는 바이트를 돌려주면 ClassReader 생성자가 예외를 던집니다.
+        // facts 가 그 예외를 삼키지 않으면 이 호출 자체가 테스트를 실패시킵니다.
+        ClassRepository corrupt = new ClassRepository(new CorruptBytesProgramModel());
+        assertThat(corrupt.facts("broken/Class")).isEmpty();
+    }
+
+    @Test
+    void unreadableClasses_afterReadFailure_recordsInternalNameWithReason() {
+        ClassRepository corrupt = new ClassRepository(new CorruptBytesProgramModel());
+        corrupt.facts("broken/Class");
+        assertThat(corrupt.unreadableClasses()).containsOnlyKeys("broken/Class");
+        assertThat(corrupt.unreadableClasses().get("broken/Class")).isNotBlank();
+    }
+
+    @Test
+    void unreadableClasses_beforeAnyReadFailure_isEmpty() {
+        // 읽기 실패가 없으면 기록도 없어야 합니다. 실패 여부와 무관하게 항상 값을 채우는
+        // 구현이라면 이 테스트가 깨집니다.
+        assertThat(classes.unreadableClasses()).isEmpty();
+    }
+
+    /** 항상 ASM 이 읽을 수 없는 바이트를 돌려주는 가짜입니다. facts 의 예외 처리만 검증합니다. */
+    private static final class CorruptBytesProgramModel implements ProgramModel {
+
+        @Override
+        public List<Endpoint> endpoints() {
+            return List.of();
+        }
+
+        @Override
+        public Optional<byte[]> classBytes(String internalName) {
+            return Optional.of(new byte[] {0x01, 0x02, 0x03});
+        }
+
+        @Override
+        public Optional<String> entityFor(String repositoryInternalName) {
+            return Optional.empty();
+        }
+
+        @Override
+        public Set<String> implementationsOf(String interfaceInternalName) {
+            return Set.of();
+        }
+
+        @Override
+        public Set<String> entities() {
+            return Set.of();
+        }
+
+        @Override
+        public Set<MethodRef> eventListeners() {
+            return Set.of();
+        }
     }
 }
