@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.toktokhan.invalidation.core.MethodRef;
 import dev.toktokhan.invalidation.core.MethodRefs;
 import dev.toktokhan.invalidation.core.fixture.entity.Account;
+import dev.toktokhan.invalidation.core.fixture.entity.Booking;
 import dev.toktokhan.invalidation.core.fixture.entity.Coordinate;
 import dev.toktokhan.invalidation.core.fixture.entity.HTTPServer;
 import dev.toktokhan.invalidation.core.fixture.entity.Member;
@@ -34,7 +35,8 @@ class EntityIndexTest {
         MethodRefs.internalNameOf(Waypoint.class),
         MethodRefs.internalNameOf(HTTPServer.class),
         MethodRefs.internalNameOf(Member.class),
-        MethodRefs.internalNameOf(Account.class))));
+        MethodRefs.internalNameOf(Account.class),
+        MethodRefs.internalNameOf(Booking.class))));
 
     @Test
     void isMutator_methodWritesOwnField_isTrue() {
@@ -82,15 +84,21 @@ class EntityIndexTest {
     }
 
     @Test
-    void associationsOf_collectionAssociation_reportsElementEntity() {
-        assertThat(entities.associationsOf(TRIP))
-            .contains(MethodRefs.internalNameOf(TripLeg.class));
+    void isMutator_methodCallsInheritedMutatorThroughUnannotatedIntermediateClass_isTrue() {
+        // Booking -> ArchivableRecord(어노테이션 없음) -> BaseRecord(@MappedSuperclass).
+        // archive() 는 ArchivableRecord 가 선언하고, 그 안에서 부르는 markDeleted() 의
+        // owner 도 ArchivableRecord 자신입니다. ArchivableRecord 는 엔티티도
+        // @MappedSuperclass 도 아니라서 holdsState 가 거짓인 경로를 지나가지만, 그래도
+        // 상속받은 변경자를 부르는 자기 선언 메서드는 잡혀야 합니다.
+        assertThat(entities.isMutator(new MethodRef(
+            MethodRefs.internalNameOf(Booking.class), "archive", "()V"))).isTrue();
     }
 
     @Test
-    void associationsOf_embeddedAssociation_reportsEmbeddableType() {
-        assertThat(entities.associationsOf(TRIP))
-            .contains(MethodRefs.internalNameOf(Coordinate.class));
+    void associationsOf_collectionAndEmbeddedAssociations_reportsExactlyThoseEntities() {
+        assertThat(entities.associationsOf(TRIP)).containsExactlyInAnyOrder(
+            MethodRefs.internalNameOf(TripLeg.class),
+            MethodRefs.internalNameOf(Coordinate.class));
     }
 
     @Test
@@ -105,7 +113,7 @@ class EntityIndexTest {
     }
 
     @Test
-    void associationsOf_associationTargetingNonEntityType_reportsNothing() {
+    void associationsOf_associationTargetingNonEntityType_excludesThatTarget() {
         assertThat(entities.associationsOf(TRIP)).doesNotContain("java/lang/String");
     }
 

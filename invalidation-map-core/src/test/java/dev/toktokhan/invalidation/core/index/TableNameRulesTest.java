@@ -38,6 +38,22 @@ class TableNameRulesTest {
     }
 
     @Test
+    void springPhysicalNamingSnakeCase_lowercaseBeforeUppercaseBeforeLowercase_insertsUnderscore() {
+        // 앞뒤가 모두 소문자인 대문자 앞에는 밑줄이 들어갑니다. 아래 "밑줄 없음" 케이스들과
+        // 짝을 이뤄, 이 함수가 항상 소문자로만 바꾸는 게 아니라 실제로 밑줄을 삽입하는
+        // 분기를 타는지 확인합니다.
+        assertThat(EntityIndex.springPhysicalNamingSnakeCase("TripLeg")).isEqualTo("trip_leg");
+    }
+
+    @Test
+    void springPhysicalNamingSnakeCase_multipleQualifyingBoundaries_insertsUnderscoreAtEach() {
+        // 밑줄을 삽입한 뒤에도 반복문의 인덱스가 삽입된 밑줄과 그 다음 대문자를 건너뛰고
+        // 정확한 자리에서 재개되는지 확인합니다. 인덱스 계산이 틀리면 O 와 T 사이,
+        // 또는 A 와 u 사이 중 하나에서 밑줄이 빠지거나 겹칩니다.
+        assertThat(EntityIndex.springPhysicalNamingSnakeCase("OAuthToken")).isEqualTo("oauth_token");
+    }
+
+    @Test
     void springPhysicalNamingSnakeCase_consecutiveUppercase_insertsNoUnderscoreBetweenThem() {
         // 앞 글자가 소문자이고 뒷 글자도 소문자일 때만 밑줄을 넣습니다. HTTPServer 는
         // 대문자가 네 번 연속이라 그 사이 어디에도 앞뒤 조건을 만족하는 자리가 없습니다.
