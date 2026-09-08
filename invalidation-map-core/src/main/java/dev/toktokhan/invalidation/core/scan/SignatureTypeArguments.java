@@ -87,6 +87,15 @@ public final class SignatureTypeArguments {
                 public void visitClassType(String name) {
                     arguments.add(name);
                 }
+
+                // 타입 인자 자체가 제네릭이면(List<Map<String, Foo>> 처럼) ASM 기본
+                // 구현이 this 를 돌려줘 안쪽 클래스 타입까지 이 비지터로 들어옵니다.
+                // 한 단계만 읽으므로 안쪽 타입 인자는 무시하는 격리된 비지터를 돌려줍니다.
+                @Override
+                public SignatureVisitor visitTypeArgument(char nestedWildcard) {
+                    return new SignatureVisitor(API) {
+                    };
+                }
             };
         }
     }
