@@ -1,0 +1,21 @@
+dependencies {
+    // 소비자가 @ReadsEntities 등을 쓰므로 api 로 노출합니다.
+    api project(':invalidation-map-core')
+
+    // 주 대상은 Boot 4.x 입니다. 소비자가 자기 버전을 가져오도록 compileOnly 로 둡니다.
+    compileOnly platform('org.springframework.boot:spring-boot-dependencies:4.0.6')
+    compileOnly 'org.springframework.boot:spring-boot-autoconfigure'
+    compileOnly 'org.springframework.boot:spring-boot-starter-web'
+    compileOnly 'org.springframework.boot:spring-boot-starter-data-jpa'
+    compileOnly 'org.springdoc:springdoc-openapi-starter-webmvc-api:3.0.1'
+
+    annotationProcessor platform('org.springframework.boot:spring-boot-dependencies:4.0.6')
+    annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
+
+    testImplementation platform('org.springframework.boot:spring-boot-dependencies:4.0.6')
+    testImplementation 'org.springframework.boot:spring-boot-starter-web'
+    testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springdoc:springdoc-openapi-starter-webmvc-api:3.0.1'
+    testRuntimeOnly 'com.h2database:h2'
+}

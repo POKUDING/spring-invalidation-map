@@ -1,5 +1,4 @@
 rootProject.name = 'spring-invalidation-map'
 
 include 'invalidation-map-core'
-// invalidation-map-spring-boot-starter 는 Task 9 에서 모듈 디렉터리와 함께 include 합니다.
-// 디렉터리 없이 include 하면 Gradle 8 에서는 deprecation 경고만 나지만 Gradle 9 에서는 빌드가 실패합니다.
+include 'invalidation-map-spring-boot-starter'
