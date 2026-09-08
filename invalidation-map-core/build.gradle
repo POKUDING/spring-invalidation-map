@@ -1,0 +1,15 @@
+dependencies {
+    // 전역 제약: main 소스셋은 ASM 외의 의존성을 갖지 않습니다.
+    // ASM 타입이 공개 API 시그니처에 나타나지 않으므로 implementation 으로 둡니다.
+    implementation 'org.ow2.asm:asm:9.7.1'
+
+    // 픽스처를 실제 어노테이션으로 꾸미기 위한 테스트 전용 의존성입니다.
+    // 코어는 어노테이션을 디스크립터 문자열로만 다루므로 main 소스셋에는 이 의존성이 없습니다.
+    // 어노테이션 디스크립터는 Boot 3 계열과 4 계열이 동일하므로 한쪽 버전으로 픽스처를 꾸며도
+    // 양쪽 소비자에게 그대로 적용됩니다.
+    testImplementation 'jakarta.persistence:jakarta.persistence-api:3.2.0'
+    testImplementation 'org.springframework.data:spring-data-jpa:4.0.5'
+    testImplementation 'org.springframework:spring-tx:7.0.7'
+    testImplementation 'org.springframework:spring-context:7.0.7'
+    testImplementation 'com.querydsl:querydsl-core:5.0.0'
+}
