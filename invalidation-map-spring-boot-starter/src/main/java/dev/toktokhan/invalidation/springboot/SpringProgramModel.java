@@ -326,9 +326,18 @@ public final class SpringProgramModel implements ProgramModel {
                 pendingInterfaces.addAll(List.of(candidate.getInterfaces()));
             }
 
+            // getSignatureContributor() 는 프록시 클래스를 돌려줄 수 있습니다. 레거시
+            // 관용구(리포지토리 인터페이스 이름 + Impl)에서는 이 값이 프래그먼트
+            // 인터페이스가 아니라 구현체 클래스 자체이고, 그 구현체가 @Transactional 등으로
+            // CGLIB 프록시가 되면 변형된 이름(...$$SpringCGLIB$$0)이 그대로 나옵니다
+            // (실측: 두 세대 모두 그렇습니다). 변형된 이름은 바이트코드의 호출 지점 owner
+            // 로는 절대 등장하지 않으므로 색인에 넣어도 아무도 조회하지 않는 잡음이고,
+            // 반대로 진짜 구현체 이름은 키로 등록되지 않습니다. 실제 클래스로 벗겨
+            // 잡음을 없애고 진짜 이름을 유효한 키로 만듭니다. 아래 구현체 등록 쪽은
+            // 처음부터 벗기고 있어 이쪽만 예외였습니다.
             List<RepositoryFragment<?>> fragments = new ArrayList<>(info.getFragments());
             fragments.sort(Comparator.comparing(
-                fragment -> MethodRefs.internalNameOf(fragment.getSignatureContributor())));
+                fragment -> MethodRefs.internalNameOf(contributorOf(fragment))));
 
             // 먼저 이 리포지토리의 프래그먼트 계약 이름을 전부 repositoryNames 에 채웁니다.
             // 구현체 등록(아래 두 번째 루프)이 이 리포지토리의 완성된 이름 집합을 보게
@@ -336,10 +345,11 @@ public final class SpringProgramModel implements ProgramModel {
             // 프래그먼트 구현체의 키가 되어야 하기 때문입니다(리포지토리 인터페이스 타입으로
             // 호출하면 정적 타입이 그 리포지토리의 모든 프래그먼트 메서드를 함께 노출하므로).
             for (RepositoryFragment<?> fragment : fragments) {
-                String contributorName = MethodRefs.internalNameOf(fragment.getSignatureContributor());
+                Class<?> contributor = contributorOf(fragment);
+                String contributorName = MethodRefs.internalNameOf(contributor);
                 registerEntityMapping(byRepository, conflicting, contributorName, entity);
                 repositoryNames.add(contributorName);
-                repositoryTypes.add(fragment.getSignatureContributor());
+                repositoryTypes.add(contributor);
             }
 
             for (RepositoryFragment<?> fragment : fragments) {
@@ -393,6 +403,14 @@ public final class SpringProgramModel implements ProgramModel {
         }
         this.repositoryEntities = Collections.unmodifiableMap(new LinkedHashMap<>(byRepository));
         this.fragmentImplementations = Collections.unmodifiableMap(new LinkedHashMap<>(byFragment));
+    }
+
+    /**
+     * 프래그먼트의 시그니처 기여자입니다. 프록시 클래스를 실제 클래스로 벗깁니다
+     * (위 {@code buildRepositoryIndex} 주석 참고).
+     */
+    private static Class<?> contributorOf(RepositoryFragment<?> fragment) {
+        return ClassUtils.getUserClass(fragment.getSignatureContributor());
     }
 
     /**
