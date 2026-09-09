@@ -20,6 +20,7 @@ import dev.toktokhan.invalidation.springboot.app.NoteRepositoryCustomImpl;
 import dev.toktokhan.invalidation.springboot.app.NoteTag;
 import dev.toktokhan.invalidation.springboot.app.SlotInstance;
 import dev.toktokhan.invalidation.springboot.app.SlotInstanceRepositoryCustom;
+import dev.toktokhan.invalidation.springboot.app.SlotInstanceRepositoryImpl;
 import dev.toktokhan.invalidation.springboot.app.TestApplication;
 import jakarta.persistence.EntityManagerFactory;
 import java.lang.reflect.Method;
@@ -118,6 +119,24 @@ class SpringProgramModelTest {
     void entityFor_transitivelyInheritedFragmentInterface_resolvesEntity() {
         assertThat(model.entityFor(MethodRefs.internalNameOf(DeepFragment.class)))
             .contains(MethodRefs.internalNameOf(DeepEntity.class));
+    }
+
+    /**
+     * 레거시 관용구에서 {@code getSignatureContributor()} 는 프래그먼트 인터페이스가 아니라
+     * 구현체 클래스 자체를 돌려주는데, 그 구현체가 {@code @Transactional} 로 CGLIB 프록시가
+     * 되면 변형된 이름({@code ...$$SpringCGLIB$$0})이 그대로 나옵니다
+     * ({@link SlotInstanceRepositoryImpl#touch} 가 이 상황을 만듭니다).
+     *
+     * <p>벗기지 않으면 색인에는 아무도 조회하지 않는 변형된 이름만 들어가고, 진짜 구현체
+     * 이름은 어떤 키로도 등록되지 않습니다. {@code SlotInstanceRepositoryImpl} 은
+     * 인터페이스가 아니므로 다른 등록 경로(리포지토리 인터페이스, 상위 인터페이스 전이
+     * 훑기)로는 절대 키가 되지 않습니다 — 이 단정이 통과하면 기여자 경로가 실제 클래스로
+     * 벗겨졌다는 뜻입니다.
+     */
+    @Test
+    void entityFor_cglibProxiedFragmentContributor_resolvesEntityByRealClassName() {
+        assertThat(model.entityFor(MethodRefs.internalNameOf(SlotInstanceRepositoryImpl.class)))
+            .contains(MethodRefs.internalNameOf(SlotInstance.class));
     }
 
     @Test
