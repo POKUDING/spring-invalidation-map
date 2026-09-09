@@ -42,15 +42,17 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
  * 만드는 클래스)는 그중 {@code globalOperationCustomizers} 만 모든 그룹에 공통으로 적용합니다
  * (springdoc-openapi-starter-common 2.5.0/3.0.1 바이트코드로 직접 확인).
  *
- * <p>실측: pirl-spring(Boot 3.3.5, 엔드포인트 211개, {@code springdoc.group-configs} 로
- * user/admin/internal 세 그룹 운용)에 실제로 붙여 확인했습니다(Task 12). 그룹이 없는
- * {@code /v3/api-docs} 에는 170개 경로 전부에 {@code x-entities} 가 실렸지만, {@code
- * /v3/api-docs/user} 와 {@code /v3/api-docs/admin} 에는 하나도 실리지 않았습니다 — 이 라이브러리의
- * 픽스처는 그룹을 쓰지 않아 Task 10, 11 어느 리뷰에서도 이 경로가 드러나지 않았습니다. 그룹을
+ * <p>실측: pirl-spring(Boot 3.3.5, {@code springdoc.group-configs} 로 user/admin/internal
+ * 세 그룹 운용)에 실제로 붙여 확인했습니다(Task 12). 이 클래스 자신의 분석 완료 로그
+ * 기준 엔드포인트는 219개입니다(설계 문서가 계획 단계에서 쓴 211개와는 다른 수치입니다
+ * — 그 값은 이 실측이 아니라 별도 측정입니다). 그룹이 없는 {@code /v3/api-docs} 에는
+ * 170개 경로 전부에 {@code x-entities} 가 실렸지만, {@code /v3/api-docs/user} 와
+ * {@code /v3/api-docs/admin} 에는 하나도 실리지 않았습니다 — 이 라이브러리의 픽스처는
+ * 그룹을 쓰지 않아 Task 10, 11 어느 리뷰에서도 이 경로가 드러나지 않았습니다. 그룹을
  * 나누는 실제 프로젝트에서는 이 빠짐이 매 요청마다 재발했을 것이므로(픽스처가 아니라 실제
  * 배포 대상에서), 조용한 누락을 금지하는 4.4절 원칙에 정면으로 걸립니다.
- * {@code GroupedApiDocsIntegrationTest} 가 그룹이 있을 때도 확장이 실리는지 재발 방지로
- * 고정합니다.
+ * {@code InvalidationMapIntegrationTest} 의 중첩 클래스 {@code GroupedApiDocs} 가 그룹이
+ * 있을 때도 확장이 실리는지 재발 방지로 고정합니다.
  */
 public final class InvalidationMapOperationCustomizer implements GlobalOperationCustomizer {
 

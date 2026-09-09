@@ -173,13 +173,24 @@ public PresignedUrlResponse issueUploadUrl() { ... }
   명시적으로 미해결로 드러나므로, `@ReadsEntities`/`@WritesEntities` 로 직접 채우거나
   `resolved: false` 를 보수적으로 다루면 됩니다.
 - **Spring Boot 3.x 와 4.x, JVM 17 과 21 을 모두 지원합니다.** 다만 Spring Boot 3.3.5 가
-  쓰는 spring-data-commons 3.3.5 는 `RepositoryInformation.getFragments()` 가 "리포지토리
-  인터페이스 이름 + `Impl`"(예: `FooRepository`/`FooRepositoryImpl`) 레거시 프래그먼트
-  관용구를 놓치는 세대차가 있습니다(spring-data-commons 4.0.5 부터 해소됨. 원인은
+  쓰는 spring-data-commons 3.3.5 는 `RepositoryInformation.getFragments()` 가 "프래그먼트
+  인터페이스 이름 + `Impl`"(예: `FooRepositoryCustom`/`FooRepositoryCustomImpl`) 관용구를
+  놓치는 세대차가 있습니다(spring-data-commons 4.0.5 부터 해소됨. 원인은
   `RepositoryFactoryBeanSupport` 가 `customImplementation` 과 `repositoryFragments` 를
-  분리해 두던 것을 4.x 가 통합한 데 있습니다). 이 라이브러리는 리포지토리 인터페이스와
-  그 상위 인터페이스 전체를 빈 팩토리에서 직접 스캔해 이 세대차를 내부적으로 흡수하므로,
-  소비자가 별도로 대응할 필요는 없습니다.
+  분리해 두던 것을 4.x 가 통합한 데 있습니다). **"리포지토리 인터페이스 이름 + `Impl`"**
+  (예: `FooRepository`/`FooRepositoryImpl`) 레거시 관용구는 3.3.5 에서도 정상 조회되므로
+  이 세대차의 영향을 받지 않습니다 — 놓치는 쪽은 그 반대인 "프래그먼트 인터페이스 이름
+  + `Impl`" 쪽입니다. 이 라이브러리는 리포지토리 인터페이스와 그 상위 인터페이스 전체를
+  빈 팩토리에서 직접 스캔해 이 세대차를 내부적으로 흡수하므로, 소비자가 별도로 대응할
+  필요는 없습니다.
+- **springdoc-openapi 는 2.0.0 이상을 요구합니다.** 이 라이브러리는 springdoc 이 그룹별
+  스펙(`springdoc.group-configs` 등)에도 커스터마이저를 공통 적용하도록 표시하는 마커
+  인터페이스 `GlobalOperationCustomizer` 를 `@ConditionalOnClass` 로 확인합니다. 이
+  클래스가 없는 springdoc 을 쓰면 예외나 로그 없이 자동 설정이 조용히 매치되지 않고
+  `x-entities` 가 통째로 안 실립니다. Maven Central 에서 받은 실제 jar 로 확인한 결과
+  `springdoc-openapi-starter-common` 2.0.0(v2 최초 릴리스)부터 이 태스크가 검증한 2.5.0,
+  3.0.1 까지 전부 이 클래스를 갖고 있어, 위에서 이미 밝힌 "springdoc 2.x 와 3.x" 지원
+  범위를 넘어서는 추가 제약은 없습니다.
 
 ## 동작 원리
 
