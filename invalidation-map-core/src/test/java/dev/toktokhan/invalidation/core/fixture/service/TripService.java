@@ -11,6 +11,7 @@ public class TripService {
     private TripPort port;
     private WideTripPort widePort;
     private GhostPort ghostPort;
+    private AncestorPort ancestorPort;
     private ApplicationEventPublisher publisher;
     private TransactionalWorker transactionalWorker;
 
@@ -129,5 +130,15 @@ public class TripService {
      */
     public void vanish() {
         ghostPort.vanish();
+    }
+
+    /**
+     * {@link AncestorPort#store} 를 부릅니다. 테스트 배선에서 유일한 등록된 구현체
+     * ({@link AncestorImpl})는 자신은 읽히지만, {@code store} 를 실제로 구현하는 상위
+     * 클래스({@link AncestorBase})를 못 읽습니다. 후보 자신의 가독성만 보면 이 경우를
+     * "메서드 없음"(안전, 무관)으로 오분류해 조용히 거르므로, 미해결로 보고돼야 합니다.
+     */
+    public void storeViaAncestor(String title) {
+        ancestorPort.store(title);
     }
 }

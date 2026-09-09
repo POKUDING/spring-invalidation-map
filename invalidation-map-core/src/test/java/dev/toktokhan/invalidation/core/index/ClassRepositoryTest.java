@@ -12,6 +12,7 @@ import dev.toktokhan.invalidation.core.fixture.hierarchy.PortAdapter;
 import dev.toktokhan.invalidation.core.fixture.hierarchy.TypedBase;
 import dev.toktokhan.invalidation.core.fixture.hierarchy.TypedChild;
 import dev.toktokhan.invalidation.core.support.FakeProgramModel;
+import dev.toktokhan.invalidation.core.support.HidingProgramModel;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -80,6 +81,30 @@ class ClassRepositoryTest {
         assertThat(classes.methodFacts(onInterface))
             .get()
             .satisfies(facts -> assertThat(facts.calls()).isEmpty());
+    }
+
+    @Test
+    void isFullyReadable_ownerUnreadable_isFalse() {
+        assertThat(classes.isFullyReadable("com/nowhere/Missing")).isFalse();
+    }
+
+    @Test
+    void isFullyReadable_ownerAndAllSupertypesReadable_isTrue() {
+        assertThat(classes.isFullyReadable(MethodRefs.internalNameOf(TypedChild.class))).isTrue();
+    }
+
+    /**
+     * {@code resolveMethod} 는 {@code TypedChild} 자신에 없는 메서드를 찾으려고 상위 타입
+     * ({@code TypedBase})까지 올라갑니다. {@code TypedChild} 자신은 읽히지만
+     * {@code TypedBase} 를 못 읽으면, "사슬 전체를 읽었다" 는 전제가 깨지므로
+     * {@code isFullyReadable} 은 거짓이어야 합니다 — 후보 자신의 가독성만 보면 이 경우를
+     * 놓칩니다.
+     */
+    @Test
+    void isFullyReadable_ownerReadableButSupertypeUnreadable_isFalse() {
+        ClassRepository hidingBase = new ClassRepository(new HidingProgramModel(
+            FakeProgramModel.create(), MethodRefs.internalNameOf(TypedBase.class)));
+        assertThat(hidingBase.isFullyReadable(MethodRefs.internalNameOf(TypedChild.class))).isFalse();
     }
 
     @Test

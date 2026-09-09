@@ -6,6 +6,9 @@ import dev.toktokhan.invalidation.core.MethodRef;
 import dev.toktokhan.invalidation.core.MethodRefs;
 import dev.toktokhan.invalidation.core.fixture.event.TripEventListeners;
 import dev.toktokhan.invalidation.core.fixture.service.AbstractTransactionalWorker;
+import dev.toktokhan.invalidation.core.fixture.service.AncestorBase;
+import dev.toktokhan.invalidation.core.fixture.service.AncestorImpl;
+import dev.toktokhan.invalidation.core.fixture.service.AncestorPort;
 import dev.toktokhan.invalidation.core.fixture.service.GhostPort;
 import dev.toktokhan.invalidation.core.fixture.service.TripPort;
 import dev.toktokhan.invalidation.core.fixture.service.TripPortAdapter;
@@ -14,6 +17,7 @@ import dev.toktokhan.invalidation.core.fixture.service.WideTripPort;
 import dev.toktokhan.invalidation.core.index.ClassRepository;
 import dev.toktokhan.invalidation.core.index.ListenerIndex;
 import dev.toktokhan.invalidation.core.support.FakeProgramModel;
+import dev.toktokhan.invalidation.core.support.HidingProgramModel;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,6 +37,10 @@ class CallGraphWalkerTest {
         // GhostPortAdapter 는 실제로 컴파일된 적 없는 이름입니다 — 클래스 바이트를 구할 수
         // 없습니다. walk_implementationClassCannotBeRead_reportsUnresolved 참고.
         .withUnreadableImplementation(GhostPort.class, BASE + "/service/GhostPortAdapter")
+        // AncestorImpl 자신은 정상적으로 읽힙니다. walk_implementationAncestorCannotBeRead_
+        // reportsUnresolved 가 이 테스트 전용 ClassRepository 에서만 AncestorBase(실제로
+        // store() 를 구현하는 상위 클래스)를 못 읽게 감쌉니다.
+        .withImplementation(AncestorPort.class, AncestorImpl.class)
         .withEventListener(TripEventListeners.class, "onTripEvent")
         .withEventListener(TripEventListeners.class, "onArchivedByClasses");
     private final ClassRepository classes = new ClassRepository(program);
@@ -157,6 +165,24 @@ class CallGraphWalkerTest {
         assertThat(stateAt.get(deepest).inTransaction()).isTrue();
     }
 
+    /**
+     * {@code descendTargets} 의 조건 {@code resolveMethod(candidate).isPresent() ||
+     * !isFullyReadable(implementation)} 중 뒤쪽({@code !isFullyReadable}) 이 거짓이 되는
+     * 경우입니다 — {@code TripPortAdapter} 자신과 그 상위 타입({@code TripPort}) 이 모두
+     * 읽히므로 {@code isFullyReadable} 은 참이고, {@code close()} 가 어디에도 없으니
+     * {@code resolveMethod} 도 실패해 전체 조건이 거짓입니다(안전하게 걸러짐).
+     *
+     * <p>{@code resolveMethod(candidate).isPresent()} 쪽(정상적으로 구현을 찾는 경로)은
+     * 이 테스트가 아니라 {@link #walk_callThroughInterface_reachesImplementationBody} 와
+     * {@link #walk_sameMethodReachedWithDifferentTransactionStates_reportsEachStateSeparately}
+     * 가 지킵니다 — {@code TripPortAdapter.store()} 가 실제로 존재해 워커가 그 본문
+     * ({@code deepest()})까지 내려가는 것을 확인하기 때문입니다. 이 파일의 테스트 셋을
+     * 세 갈래로 나누면: 이 테스트(사슬 전체가 읽혔고 메서드 없음 → 거름),
+     * {@link #walk_implementationClassCannotBeRead_reportsUnresolved}(후보 자신을 못
+     * 읽음 → 안 거름), {@link #walk_implementationAncestorCannotBeRead_reportsUnresolved}
+     * (후보 자신은 읽히지만 상위 타입을 못 읽음 → 안 거름)입니다(재검토 라운드2가 "두
+     * 테스트가 정확히 두 분기를 지킨다"는 서술이 부정확하다고 지적해 바로잡았습니다).
+     */
     @Test
     void walk_implementationMissingCalledMethod_doesNotReportUnresolved() {
         // implementationsOf(WideTripPort) 가 돌려주는 TripPortAdapter 에는 close() 가
@@ -174,13 +200,31 @@ class CallGraphWalkerTest {
     void walk_implementationClassCannotBeRead_reportsUnresolved() {
         // GhostPortAdapter 는 실제로 컴파일된 적 없는 이름입니다 — 클래스 바이트를 구할 수
         // 없습니다(program.classBytes 가 예외 없이 빈 값을 돌려줌). 이 후보가 이 호출과
-        // 무관한지 판단할 수 없으므로, 메서드가 없어서 걸러지는 경우(바로 위 테스트)와
-        // 달리 조용히 넘어가면 안 됩니다 — resolveMethod 실패의 두 원인(메서드 없음 vs
-        // 클래스 자체를 못 읽음)을 구분하지 못하면 이 접근도 조용히 사라집니다(라운드 2
-        // 재검토가 발견한 회귀, TempGhostCandidateProbe 로 재현됨).
+        // 무관한지 판단할 수 없으므로, 메서드가 없어서 걸러지는 경우(위 테스트)와 달리
+        // 조용히 넘어가면 안 됩니다 — resolveMethod 실패의 두 원인(메서드 없음 vs 클래스
+        // 자체를 못 읽음)을 구분하지 못하면 이 접근도 조용히 사라집니다(라운드 2 재검토가
+        // 발견한 회귀, TempGhostCandidateProbe 로 재현됨).
         WalkResult result = walker.walk(ref("vanish"), visitor);
         assertThat(result.unresolved()).anySatisfy(
             reason -> assertThat(reason).contains("GhostPortAdapter"));
+    }
+
+    @Test
+    void walk_implementationAncestorCannotBeRead_reportsUnresolved() {
+        // AncestorImpl(구현체 후보 자신)은 정상적으로 읽히지만, store() 를 실제로
+        // 구현하는 상위 클래스(AncestorBase)는 이 테스트에서만 못 읽게 감쌉니다.
+        // isFullyReadable 이 후보 자신의 가독성만 봤다면(라운드2 수정) 이 경우를
+        // "사슬 전체를 읽었는데 메서드가 없음"(안전, 무관)으로 오분류해 조용히
+        // 걸렀을 것입니다 — resolveMethod 가 실제로 훑는 범위(후보 자신 + 상위 타입
+        // 전체)와 어긋나기 때문입니다. 라운드3 재검토가 발견한 회귀이며, isFullyReadable
+        // 이 supertypesOf 전체를 확인하도록 고쳐서 막았습니다.
+        ClassRepository hidingAncestorBase = new ClassRepository(
+            new HidingProgramModel(program, MethodRefs.internalNameOf(AncestorBase.class)));
+        CallGraphWalker walkerWithHiddenAncestor = new CallGraphWalker(hidingAncestorBase, program,
+            new ListenerIndex(hidingAncestorBase, program.eventListeners()), List.of(BASE), 20_000);
+
+        WalkResult result = walkerWithHiddenAncestor.walk(ref("storeViaAncestor"), visitor);
+        assertThat(result.unresolved()).isNotEmpty();
     }
 
     @Test
