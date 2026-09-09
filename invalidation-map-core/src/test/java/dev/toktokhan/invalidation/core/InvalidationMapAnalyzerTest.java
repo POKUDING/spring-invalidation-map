@@ -44,6 +44,9 @@ class InvalidationMapAnalyzerTest {
         .withEndpoint("PUT", "/trips/{title}", TripController.class, "rename", Trip.class, String.class)
         .withEndpoint("POST", "/trips/publish", TripController.class, "publish")
         .withEndpoint("GET", "/trips/ping", TripController.class, "ping")
+        .withEndpoint("POST", "/trips/persist", TripController.class, "persistViaEntityManager")
+        .withEndpoint("POST", "/trips/persist-opaque", TripController.class, "persistOpaqueAndRead",
+            String.class, Object.class)
         .withEndpoint("GET", "/trips/health", TripController.class, "health")
         .withEndpoint("GET", "/trips/hint/{title}", TripController.class, "readWithHint", String.class)
         .withEndpoint("PUT", "/trips/override/{title}", TripController.class, "writeWithOverride",
@@ -56,6 +59,30 @@ class InvalidationMapAnalyzerTest {
         .withEventListener(TripEventListeners.class, "onTripEvent");
 
     private final InvalidationMapAnalyzer analyzer = new InvalidationMapAnalyzer();
+
+    @Test
+    void analyze_entityManagerPersist_reportsEntityAsWrite() {
+        EndpointEntities entities = analyze(options(false))
+            .forHandler(program.ref(TripController.class, "persistViaEntityManager")).orElseThrow();
+
+        assertThat(entities.writes()).containsExactly(TRIP);
+        assertThat(entities.resolved()).isTrue();
+    }
+
+    @Test
+    void analyze_entityManagerPersistWithUnknownArgument_marksEndpointUnresolved() {
+        // 이 엔드포인트에는 해석된 읽기(Trip)가 있어 "엔티티 접근을 찾지 못했습니다" 사유는
+        // 붙지 않습니다. 특정하지 못한 persist 자리를 따로 표시하지 않으면 그 쓰기가 아무
+        // 표시 없이 사라집니다(설계 문서 4.4절이 금지하는 방향).
+        EndpointEntities entities = analyze(options(false))
+            .forHandler(program.ref(TripController.class, "persistOpaqueAndRead",
+                String.class, Object.class)).orElseThrow();
+
+        assertThat(entities.reads()).containsExactly(TRIP);
+        assertThat(entities.resolved()).isFalse();
+        assertThat(entities.unresolved()).anySatisfy(reason -> assertThat(reason)
+            .contains("엔티티를 특정하지 못했습니다").contains("persist"));
+    }
 
     @Test
     void analyze_repositoryRead_reportsEntityAsRead() {

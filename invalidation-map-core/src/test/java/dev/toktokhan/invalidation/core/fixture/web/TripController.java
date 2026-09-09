@@ -4,6 +4,7 @@ import dev.toktokhan.invalidation.core.annotation.InvalidationMapIgnore;
 import dev.toktokhan.invalidation.core.annotation.WritesEntities;
 import dev.toktokhan.invalidation.core.fixture.entity.Trip;
 import dev.toktokhan.invalidation.core.fixture.entity.TripLeg;
+import dev.toktokhan.invalidation.core.fixture.repo.EntityManagerRepository;
 import dev.toktokhan.invalidation.core.fixture.repo.TripJpaRepository;
 import dev.toktokhan.invalidation.core.fixture.service.TripService;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,6 +13,7 @@ public class TripController implements TripEndpoints {
 
     private TripJpaRepository repository;
     private TripService service;
+    private EntityManagerRepository entityManagerRepository;
 
     /** 리포지토리 읽기입니다. 연관 한 단계 확장으로 TripLeg 와 Coordinate 가 붙어야 합니다. */
     public Object read(String title) {
@@ -27,6 +29,29 @@ public class TripController implements TripEndpoints {
     /** 이벤트를 지나 리스너까지 도달해야 합니다. */
     public void publish() {
         service.publish();
+    }
+
+    /**
+     * {@code em.persist(...)} 로만 쓰는 엔드포인트입니다. 인자 타입을 호출 지점에서 알 수
+     * 없으므로 호출을 담은 메서드의 타입 후보로 판정해야 합니다.
+     */
+    @Transactional
+    public void persistViaEntityManager() {
+        entityManagerRepository.persistNew();
+    }
+
+    /**
+     * 인자의 타입을 어디서도 알 수 없는 {@code em.persist(...)} 와, 정상적으로 해석되는
+     * 리포지토리 읽기를 함께 담습니다.
+     *
+     * <p>해석된 접근이 하나라도 있으면 "엔티티 접근을 찾지 못했습니다" 사유가 붙지
+     * 않으므로, 특정하지 못한 자리를 따로 표시하지 않으면 그 쓰기가 아무 표시 없이
+     * 사라집니다 — 이 엔드포인트가 그 조용한 누락을 재현합니다.
+     */
+    @Transactional
+    public Object persistOpaqueAndRead(String title, Object opaque) {
+        entityManagerRepository.persistOpaque(opaque);
+        return repository.findByTitle(title);
     }
 
     /** 엔티티에 닿지 않습니다. 미해결로 표시되어야 합니다. */
