@@ -1,6 +1,7 @@
 package dev.toktokhan.invalidation.core.scan;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.toktokhan.invalidation.core.MethodRef;
 import dev.toktokhan.invalidation.core.MethodRefs;
@@ -155,6 +156,22 @@ class ClassFactsReaderTest {
         assertThat(method("version").referencedFieldOwners())
             .containsExactly(MethodRefs.internalNameOf(ScanSample.class));
         assertThat(method("version").referencedFieldTypes()).isEmpty();
+    }
+
+    @Test
+    void readFields_annotationMap_isImmutableAndComplete() {
+        // 클래스·메서드 레벨은 불변 복사본을 담는데 필드만 가변 맵을 그대로 노출했습니다.
+        // 필드가 방문 순서대로 전부 남아 있는지도 함께 단정합니다 — 불변화 과정에서
+        // FieldFacts 생성 시점을 옮겼으므로 필드가 빠지면 여기서 드러납니다.
+        FieldFacts related = facts.fields().stream()
+            .filter(field -> field.name().equals("related"))
+            .findFirst().orElseThrow();
+
+        assertThat(related.hasAnnotation("Ljakarta/persistence/OneToMany;")).isTrue();
+        assertThat(facts.fields()).extracting(FieldFacts::name)
+            .containsExactly("name", "version", "related");
+        assertThatThrownBy(() -> related.annotations().put("x", AnnotationValues.EMPTY))
+            .isInstanceOf(UnsupportedOperationException.class);
     }
 
     private MethodFacts method(String name) {

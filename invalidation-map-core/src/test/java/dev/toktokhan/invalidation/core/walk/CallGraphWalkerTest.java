@@ -282,6 +282,40 @@ class CallGraphWalkerTest {
             assertThat(reason).contains("이벤트 타입을 식별하지 못했습니다"));
     }
 
+    @Test
+    void walk_basePackagePrefixWithoutPathBoundary_doesNotDescend() {
+        // 기준 패키지를 ".../fixture/serv" 로 둡니다 — ".../fixture/service" 의 접두사이지만
+        // 경로 경계가 아닙니다. 단순 startsWith 로 비교하는 구현은 이 이름을 기준 패키지
+        // 안으로 잘못 보고 구현체 본문까지 내려갑니다.
+        CallGraphWalker offBoundary = new CallGraphWalker(
+            classes, program, new ListenerIndex(classes, program.eventListeners()),
+            List.of(BASE + "/serv"), 20_000);
+
+        WalkResult result = offBoundary.walk(ref("write"), visitor);
+
+        assertThat(seen).doesNotContain(program.ref(TripPortAdapter.class, "deepest"));
+        assertThat(result.unresolved()).isEmpty();
+    }
+
+    @Test
+    void walk_basePackageExactMatch_descends() {
+        // 대조군입니다. 기준 패키지가 호출 대상의 이름과 정확히 같아도 내려가야 합니다 —
+        // 경계 검사를 "접두사 다음이 / 여야 한다" 로만 두고 정확히 같은 경우를 빼먹으면
+        // 그 이름 자체로 지정한 기준이 통째로 무동작이 됩니다.
+        //
+        // 단정 대상이 storeOnPort() 가 아니라 구현체 본문의 호출인 이유: 워커는 만난 호출
+        // 지점을 기준 패키지와 무관하게 전부 방문자에게 넘기므로(onCall), storeOnPort() 는
+        // 내려가지 않아도 seen 에 들어옵니다. 실제로 내려갔는지는 구현체 본문에서만
+        // 보이는 호출로 확인해야 합니다.
+        CallGraphWalker exact = new CallGraphWalker(
+            classes, program, new ListenerIndex(classes, program.eventListeners()),
+            List.of(MethodRefs.internalNameOf(TripPort.class)), 20_000);
+
+        exact.walk(ref("write"), visitor);
+
+        assertThat(seen).contains(program.ref(TripPortAdapter.class, "deepest"));
+    }
+
     private MethodRef ref(String methodName) {
         return program.ref(TripService.class, methodName);
     }
