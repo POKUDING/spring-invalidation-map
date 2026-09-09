@@ -12,10 +12,26 @@ import java.util.Set;
  * QueryDSL 사용 지점을 엔티티 접근으로 바꿉니다. 설계 문서 4.2절 4번입니다.
  *
  * <p>엔티티는 호출 지점의 owner 나 인자 타입이 아니라, 호출을 담은 메서드가 참조한
- * Q클래스에서 얻습니다. {@code MethodFacts.newTypes()} 와 {@code calls()} 의 owner 에
- * 나타난 타입 중 {@code EntityPathBase<T>} 를 상속한 것을 찾아 {@code T} 를 엔티티로
- * 씁니다. {@code ConstructorExpression<T>} 를 상속한 DTO 프로젝션 Q클래스는 상위 타입이
- * 다르므로 자동으로 걸러집니다.
+ * Q클래스에서 얻습니다. {@code MethodFacts.newTypes()} 와 {@code calls()} 의 owner,
+ * {@code referencedFieldOwners()} 에 나타난 타입 중 {@code EntityPathBase<T>} 를 상속한
+ * 것을 찾아 {@code T} 를 엔티티로 씁니다. {@code ConstructorExpression<T>} 를 상속한 DTO
+ * 프로젝션 Q클래스는 상위 타입이 다르므로 자동으로 걸러집니다.
+ *
+ * <p><b>{@code referencedFieldOwners()} 가 필요한 이유:</b> QueryDSL Q클래스는 보통
+ * {@code new QTrip()} 으로 만들지 않고, 코드 생성기가 만들어 둔 {@code public static
+ * final} 기본 인스턴스(예: {@code QTrip.trip}, static import 로 {@code trip} 처럼 쓰는
+ * 관용구)를 그대로 참조합니다. 이 경우 {@code NEW} 명령이 아예 없어 {@code newTypes()} 에
+ * 잡히지 않고, Q클래스 자신에 선언된 메서드를 직접 호출하지도 않는 코드(예: {@code
+ * qEntity.field.eq(...)} 처럼 필드의 타입인 {@code BooleanPath} 등을 호출하는 경우)라면
+ * {@code calls()} 의 owner 에도 Q클래스가 나타나지 않습니다. 실측(Task 12, pirl-spring
+ * {@code ClassInfoRepositoryImpl.findAllVisibleAtForV1} — {@code jpaQueryFactory
+ * .selectFrom(classInfo).leftJoin(classInfo.classPhotoList).fetchJoin().where(...)}
+ * 처럼 정적 인스턴스 {@code classInfo} 를 필드로만 참조): 이 라이브러리의 기존 픽스처
+ * ({@code QuerydslRepository.selectFrom()})는 {@code new QTrip()} 을 쓰는 방식이라 이
+ * 경로가 지금까지 드러나지 않았지만, QueryDSL 코드 생성기 자신이 권장하는 기본 관용구가
+ * 바로 정적 인스턴스 참조이므로 실제 프로젝트에서는 이쪽이 오히려 흔합니다. {@code
+ * GETSTATIC}/{@code GETFIELD} 로 읽은 필드의 선언 타입({@code referencedFieldOwners()})도
+ * 함께 봐야 이 관용구를 놓치지 않습니다.
  *
  * <p><b>다만 어느 호출 지점에 반응할지는 {@code callee} 로 게이트를 겁니다.</b> owner 가
  * {@code com/querydsl/} 패키지이거나(QueryDSL API 표면 — {@code JPAQueryFactory},
@@ -44,6 +60,7 @@ public final class QuerydslResolver implements EntityResolver {
         }
         Set<String> referencedTypes = new LinkedHashSet<>(context.state().caller().newTypes());
         context.state().caller().calls().forEach(call -> referencedTypes.add(call.owner()));
+        referencedTypes.addAll(context.state().caller().referencedFieldOwners());
 
         Set<String> found = new LinkedHashSet<>();
         for (String type : referencedTypes) {

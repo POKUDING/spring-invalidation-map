@@ -9,11 +9,18 @@ import org.objectweb.asm.Opcodes;
 /**
  * 메서드 본문에서 뽑아낸 사실입니다.
  *
- * @param calls            호출한 메서드. 바이트코드 순서를 유지합니다
- * @param newTypes         {@code NEW} 로 생성한 타입의 internal name
- * @param stringConstants  {@code LDC} 로 실린 문자열 상수
- * @param writtenOwnFields {@code PUTFIELD} 로 값을 쓴 자기 클래스 필드명
- * @param lambdaBodies     {@code INVOKEDYNAMIC} 부트스트랩 인자가 가리키는 메서드
+ * @param calls               호출한 메서드. 바이트코드 순서를 유지합니다
+ * @param newTypes            {@code NEW} 로 생성한 타입의 internal name
+ * @param stringConstants     {@code LDC} 로 실린 문자열 상수
+ * @param writtenOwnFields    {@code PUTFIELD} 로 값을 쓴 자기 클래스 필드명
+ * @param referencedFieldOwners {@code GETSTATIC}/{@code GETFIELD} 로 읽은 필드를 선언한
+ *                              타입의 internal name. QueryDSL Q클래스는 보통 {@code new}
+ *                              로 만들지 않고 코드 생성기가 만든 {@code public static final}
+ *                              기본 인스턴스(예: {@code QTrip.trip})를 그대로 참조합니다 —
+ *                              이 경우 {@code newTypes} 에는 아무것도 잡히지 않고 이 필드로만
+ *                              드러납니다({@link dev.toktokhan.invalidation.core.resolve.QuerydslResolver}
+ *                              참고)
+ * @param lambdaBodies        {@code INVOKEDYNAMIC} 부트스트랩 인자가 가리키는 메서드
  */
 public record MethodFacts(
     MethodRef ref,
@@ -22,6 +29,7 @@ public record MethodFacts(
     List<String> newTypes,
     List<String> stringConstants,
     Set<String> writtenOwnFields,
+    Set<String> referencedFieldOwners,
     Map<String, AnnotationValues> annotations,
     List<MethodRef> lambdaBodies
 ) {

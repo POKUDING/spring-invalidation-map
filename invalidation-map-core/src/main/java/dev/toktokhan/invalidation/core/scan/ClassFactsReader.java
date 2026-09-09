@@ -102,6 +102,7 @@ public final class ClassFactsReader {
         private final List<String> newTypes = new ArrayList<>();
         private final List<String> stringConstants = new ArrayList<>();
         private final Set<String> writtenOwnFields = new LinkedHashSet<>();
+        private final Set<String> referencedFieldOwners = new LinkedHashSet<>();
         private final Map<String, AnnotationValues> annotations = new LinkedHashMap<>();
         private final List<MethodRef> lambdaBodies = new ArrayList<>();
 
@@ -144,6 +145,16 @@ public final class ClassFactsReader {
             if (opcode == Opcodes.PUTFIELD && owner.equals(ownerInternalName)) {
                 writtenOwnFields.add(name);
             }
+            // QueryDSL Q클래스는 보통 new 로 만들지 않고 코드 생성기가 만든 public static
+            // final 기본 인스턴스를 그대로 참조합니다(예: QTrip.trip 을 static import 해서
+            // 쓰는 관용구). 이 경우 NEW 명령이 아예 없어 newTypes 에 잡히지 않으므로,
+            // GETSTATIC/GETFIELD 로 읽은 필드의 선언 타입도 별도로 모아 둡니다. PUTFIELD 는
+            // 자기 필드 판정(writtenOwnFields)에 이미 쓰므로 owner 제한 없이 함께 기록해도
+            // 안전합니다 — 어차피 QuerydslResolver 는 EntityPathBase 상속 여부로 다시
+            // 걸러내므로 무관한 owner 가 섞여도 과잉이 생기지 않습니다.
+            if (opcode == Opcodes.GETSTATIC || opcode == Opcodes.GETFIELD) {
+                referencedFieldOwners.add(owner);
+            }
         }
 
         @Override
@@ -166,6 +177,7 @@ public final class ClassFactsReader {
         public void visitEnd() {
             sink.accept(new MethodFacts(ref, access, List.copyOf(calls), List.copyOf(newTypes),
                 List.copyOf(stringConstants), Collections.unmodifiableSet(new LinkedHashSet<>(writtenOwnFields)),
+                Collections.unmodifiableSet(new LinkedHashSet<>(referencedFieldOwners)),
                 Collections.unmodifiableMap(new LinkedHashMap<>(annotations)), List.copyOf(lambdaBodies)));
         }
     }
