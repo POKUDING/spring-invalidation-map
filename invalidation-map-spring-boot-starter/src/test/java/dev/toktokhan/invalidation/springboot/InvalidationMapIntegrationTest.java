@@ -1,6 +1,7 @@
 package dev.toktokhan.invalidation.springboot;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -17,9 +18,11 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springdoc.core.models.GroupedOpenApi;
+import org.springframework.boot.SpringApplication;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -192,6 +195,30 @@ class InvalidationMapIntegrationTest {
      * {@code invalidation-map.entity-naming: SIMPLE} 을 켠 별도 컨텍스트입니다. 프로퍼티가
      * 바깥 클래스와 달라 스프링이 별도 애플리케이션 컨텍스트를 띄웁니다.
      */
+    /**
+     * {@code invalidation-map.fail-on-unresolved} 가 실제로 부팅을 실패시키는지 확인합니다.
+     *
+     * <p>이 프로퍼티는 README 가 "CI 에서 회귀를 잡는 용도" 로 안내하는 유일한 가드인데
+     * 지금까지 어떤 테스트도 밟지 않았습니다. 배선이 끊어져 있으면(예:
+     * {@code @ConditionalOnProperty} 의 이름 오타, 리스너 등록 누락) 가드가 조용히 아무
+     * 일도 하지 않고, 그 사실이 CI 에서는 "미해결 없음" 과 구분되지 않습니다.
+     *
+     * <p>기본 컨텍스트가 아니라 새 {@link SpringApplication} 을 이 프로퍼티만 켜서 띄웁니다 —
+     * 부팅 실패 자체가 검증 대상이므로 {@code @SpringBootTest} 컨텍스트를 쓸 수 없습니다.
+     * 픽스처 앱에는 의도적으로 미해결인 엔드포인트({@code /notes/ping})가 있습니다.
+     */
+    @Test
+    void failOnUnresolved_appWithUnresolvedEndpoint_failsStartup() {
+        SpringApplication application = new SpringApplication(TestApplication.class);
+        application.setDefaultProperties(Map.of(
+            "invalidation-map.fail-on-unresolved", "true",
+            "server.port", "0"));
+
+        assertThatThrownBy(application::run)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("@InvalidationMapIgnore");
+    }
+
     @Nested
     @SpringBootTest(classes = TestApplication.class, webEnvironment = RANDOM_PORT,
         properties = "invalidation-map.entity-naming=SIMPLE")
