@@ -80,6 +80,30 @@ public final class ClassRepository {
             .findFirst();
     }
 
+    /**
+     * {@code internalName} 자신과 그 상위 타입 전부(클래스·인터페이스)를 끝까지 읽을 수
+     * 있었는지 확인합니다.
+     *
+     * <p>{@link #resolveMethod} 는 이 사슬(자신 → {@link #supertypesOf}) 을 그대로 훑어
+     * 메서드를 찾으므로, 사슬 전체가 읽혔을 때만 "그 메서드가 없다"는 {@code
+     * resolveMethod} 의 결론(빈 값)을 신뢰할 수 있습니다. 사슬 어딘가를 못 읽었으면 그
+     * 뒤에 실제 구현이 있었을 수도 있으므로, 못 찾았다는 결과만으로 "없다"고 단정하면
+     * 안 됩니다.
+     *
+     * <p>{@code internalName} 자신을 못 읽으면 그 시점에서 이미 확신할 수 없어 바로
+     * {@code false} 입니다. 읽히면 {@link #supertypesOf} 가 돌려주는 상위 타입 전부를
+     * 마저 확인합니다 — {@code supertypesOf} 는 어느 링크에서 읽기가 실패하면 그 지점에서
+     * 확장을 멈추지만(그 뒤의 진짜 상위 타입을 더 찾지 못함), 실패한 링크 자체는 이미
+     * 목록에 들어 있으므로 이 판정에는 그것으로 충분합니다 — 그 링크 하나가 못 읽혔다는
+     * 사실 자체가 "사슬 전체를 확인하지 못했다"는 뜻이기 때문입니다.
+     */
+    public boolean isFullyReadable(String internalName) {
+        if (facts(internalName).isEmpty()) {
+            return false;
+        }
+        return supertypesOf(internalName).stream().allMatch(supertype -> facts(supertype).isPresent());
+    }
+
     /** 자신을 제외한 모든 상위 클래스와 인터페이스입니다. 너비 우선 순서입니다. */
     public List<String> supertypesOf(String internalName) {
         return supertypeCache.computeIfAbsent(internalName, start -> {
