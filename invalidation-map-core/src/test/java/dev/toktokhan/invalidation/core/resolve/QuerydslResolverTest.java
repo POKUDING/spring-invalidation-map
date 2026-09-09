@@ -44,6 +44,22 @@ class QuerydslResolverTest {
             .contains(new EntityAccess(Set.of(TRIP), AccessKind.READ));
     }
 
+    /**
+     * QueryDSL 코드 생성기가 실제로 만드는 관용구입니다 — Q클래스를 {@code new} 로 만들지
+     * 않고 그 클래스 자신의 {@code public static final} 기본 인스턴스를 그대로 씁니다.
+     * {@code QuerydslRepository.selectFromStaticInstance()} 본문에는 {@code NEW QTrip} 도,
+     * {@code QTrip} 자신에 선언된 메서드 호출도 없고 {@code GETSTATIC} 필드 읽기만 있습니다.
+     *
+     * <p>실측(Task 12, pirl-spring): {@code newTypes()} 와 {@code calls()} 의 owner 만 보던
+     * 이전 구현은 이 경우를 놓쳐 {@code Optional.empty()} 를 돌려줬습니다 —
+     * {@code referencedFieldOwners()} 를 추가로 봐야 통과합니다.
+     */
+    @Test
+    void resolve_callerReferencesEntityQClassViaStaticField_reportsEntity() {
+        assertThat(resolveIn("selectFromStaticInstance", QUERYDSL_API_CALL))
+            .contains(new EntityAccess(Set.of(TRIP), AccessKind.READ));
+    }
+
     @Test
     void resolve_calleeIsQuerydslApiSurface_reportsEntity() {
         // owner 가 QTrip 자신이 아니라 com/querydsl/ 패키지의 API(JPAQueryFactory 등)여도

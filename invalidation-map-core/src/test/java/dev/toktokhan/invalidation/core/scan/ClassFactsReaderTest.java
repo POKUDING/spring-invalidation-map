@@ -7,6 +7,7 @@ import dev.toktokhan.invalidation.core.fixture.scan.GenericSample;
 import dev.toktokhan.invalidation.core.fixture.scan.RecordSample;
 import dev.toktokhan.invalidation.core.fixture.scan.RelatedEntity;
 import dev.toktokhan.invalidation.core.fixture.scan.ScanSample;
+import dev.toktokhan.invalidation.core.resolve.QuerydslResolver;
 import dev.toktokhan.invalidation.core.support.Bytes;
 import org.junit.jupiter.api.Test;
 
@@ -28,6 +29,24 @@ class ClassFactsReaderTest {
     @Test
     void read_methodDoesNotWriteOwnField_reportsNoField() {
         assertThat(method("describe").writtenOwnFields()).isEmpty();
+    }
+
+    /**
+     * {@code describe()} 는 {@code prefix.concat(name)} 에서 {@code this.name} 을
+     * {@code GETFIELD} 로 읽습니다. {@link QuerydslResolver} 가 QueryDSL Q클래스의 정적
+     * 기본 인스턴스 참조({@code QTrip.trip} 처럼 {@code new} 없이 필드로만 쓰는 실제
+     * 관용구, Task 12 pirl-spring 실측)를 찾으려면 이 사실이 필요합니다.
+     */
+    @Test
+    void read_methodReadsField_reportsFieldOwner() {
+        assertThat(method("describe").referencedFieldOwners())
+            .contains(Bytes.internalName(ScanSample.class));
+    }
+
+    /** {@code rename()} 은 {@code PUTFIELD} 만 하고 어떤 필드도 읽지 않습니다. */
+    @Test
+    void read_methodOnlyWritesField_reportsNoFieldOwner() {
+        assertThat(method("rename").referencedFieldOwners()).isEmpty();
     }
 
     @Test

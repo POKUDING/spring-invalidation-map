@@ -3,11 +3,20 @@ package dev.toktokhan.invalidation.core.fixture.repo;
 import com.querydsl.core.types.ConstructorExpression;
 import com.querydsl.core.types.dsl.EntityPathBase;
 import dev.toktokhan.invalidation.core.fixture.entity.Trip;
+import dev.toktokhan.invalidation.core.resolve.QuerydslResolver;
 
 public class QuerydslRepository {
 
     /** 엔티티 Q클래스를 흉내 낸 픽스처입니다. {@code EntityPathBase<Trip>} 를 상속합니다. */
     public static class QTrip extends EntityPathBase<Trip> {
+
+        /**
+         * QueryDSL 코드 생성기가 실제로 만들어 내는 관용구입니다. 실제 Q클래스는 이렇게
+         * {@code public static final} 기본 인스턴스를 자기 자신 안에 두고, 소비 코드는
+         * 이 인스턴스를 {@code new} 로 다시 만들지 않고 그대로(또는 static import 로) 씁니다.
+         * {@link #selectFromStaticInstance()} 가 이 인스턴스만 참조합니다.
+         */
+        public static final QTrip trip = new QTrip();
 
         public QTrip() {
             super(Trip.class, "trip");
@@ -34,6 +43,24 @@ public class QuerydslRepository {
     public Object selectFrom() {
         QTrip trip = new QTrip();
         return trip.toString();
+    }
+
+    /**
+     * QueryDSL 의 실제 관용구를 흉내 낸 픽스처입니다 — {@link #selectFrom()} 과 달리 이
+     * 메서드 안에는 {@code NEW QTrip} 명령이 전혀 없고, {@code QTrip} 자신에 선언된
+     * 메서드를 호출하지도 않습니다. {@code QTrip.trip} 정적 필드를 {@code GETSTATIC} 으로
+     * 읽기만 합니다.
+     *
+     * <p>실측(Task 12, pirl-spring {@code ClassInfoRepositoryImpl.findAllVisibleAtForV1})에서
+     * {@code jpaQueryFactory.selectFrom(classInfo).leftJoin(classInfo.classPhotoList)
+     * .fetchJoin().where(...)} 처럼 정적 인스턴스만 참조하는 코드가 지금까지의 픽스처
+     * ({@link #selectFrom()}, {@code new QTrip()} 관용구)로는 재현되지 않아 엔티티 접근을
+     * 통째로 놓쳤습니다({@code resolved: false}). {@link QuerydslResolver} 가
+     * {@code referencedFieldOwners()} 도 함께 보도록 고친 뒤에는 이 메서드로도 {@code Trip}
+     * 을 찾습니다.
+     */
+    public Object selectFromStaticInstance() {
+        return QTrip.trip;
     }
 
     public Object projection() {
