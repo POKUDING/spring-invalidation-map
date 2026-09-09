@@ -19,8 +19,11 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.springdoc.core.models.GroupedOpenApi;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.context.annotation.Bean;
 
 /**
  * {@code /v3/api-docs} 응답에 {@code x-entities} 확장이 실제로 실리는지 확인하는 종단 테스트입니다.
@@ -168,7 +171,11 @@ class InvalidationMapIntegrationTest {
     }
 
     private static JsonNode apiDocs(int port) throws Exception {
-        HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/v3/api-docs"))
+        return apiDocs(port, "/v3/api-docs");
+    }
+
+    private static JsonNode apiDocs(int port, String path) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
             .GET()
             .build();
         HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
@@ -226,6 +233,50 @@ class InvalidationMapIntegrationTest {
 
             assertThat(toList(reads)).containsExactly(
                 AlphaEntity.class.getSimpleName(), SlotInstance.class.getSimpleName());
+        }
+    }
+
+    /**
+     * {@code springdoc.group-configs} 로 API 를 여러 그룹으로 나눴을 때도 {@code x-entities} 가
+     * 그룹별 스펙({@code /v3/api-docs/{group}})에 실리는지 검증합니다.
+     *
+     * <p>재현: pirl-spring(Task 12, user/admin/internal 세 그룹)에서 그룹 없는
+     * {@code /v3/api-docs} 에는 확장이 실렸지만 {@code /v3/api-docs/user}, {@code
+     * /v3/api-docs/admin} 에는 하나도 실리지 않았습니다. 이 라이브러리의 픽스처는 지금까지
+     * 그룹을 쓴 적이 없어(Task 10, 11 어느 리뷰에서도) 이 경로 자체가 드러나지 않았습니다.
+     * {@code GroupedOpenApi} 빈을 직접 등록해 같은 상황을 픽스처로 재현합니다.
+     *
+     * <p>{@link InvalidationMapOperationCustomizer} 가 평범한 {@code OperationCustomizer} 를
+     * 구현했을 때는 이 테스트가 실패했습니다({@code /v3/api-docs/notes} 의 {@code x-entities} 가
+     * 비어 있었습니다) — springdoc 이 그룹별 스펙에는 {@code GlobalOperationCustomizer} 만
+     * 공통 적용하기 때문입니다(클래스 javadoc 참고). {@code GlobalOperationCustomizer} 로
+     * 바꾼 뒤에는 통과합니다.
+     */
+    @Nested
+    @SpringBootTest(classes = {TestApplication.class, GroupedApiDocs.NotesGroupConfig.class},
+        webEnvironment = RANDOM_PORT)
+    class GroupedApiDocs {
+
+        @LocalServerPort
+        private int port;
+
+        @TestConfiguration
+        static class NotesGroupConfig {
+
+            @Bean
+            GroupedOpenApi notesGroup() {
+                return GroupedOpenApi.builder()
+                    .group("notes")
+                    .pathsToMatch("/notes/**")
+                    .build();
+            }
+        }
+
+        @Test
+        void apiDocs_groupedEndpoint_hasEntitiesExtension() throws Exception {
+            JsonNode reads = apiDocs(port, "/v3/api-docs/notes").at("/paths/~1notes/get/x-entities/reads");
+
+            assertThat(toList(reads)).contains(NOTE_FQCN);
         }
     }
 }
