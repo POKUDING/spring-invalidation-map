@@ -28,6 +28,20 @@ public class ScanSample {
         this.name = next;
     }
 
+    /**
+     * 필드에 담긴 값의 타입이 그 필드를 선언한 타입과 다른 픽스처입니다. {@code GETFIELD
+     * related} 의 owner 는 {@code ScanSample} 이고 필드 타입은 {@code java/util/List} 라,
+     * 선언 타입만 모으는 구현과 필드 타입까지 모으는 구현이 구분됩니다.
+     */
+    public int relatedCount() {
+        return this.related.size();
+    }
+
+    /** LDC 로 실린 클래스 리터럴을 담습니다. */
+    public Class<?> relatedType() {
+        return RelatedEntity.class;
+    }
+
     /** LDC 문자열 상수와 메서드 호출을 담습니다. */
     public String describe() {
         String prefix = "sample";

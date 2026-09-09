@@ -3,6 +3,7 @@ package dev.toktokhan.invalidation.core.scan;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.toktokhan.invalidation.core.MethodRef;
+import dev.toktokhan.invalidation.core.MethodRefs;
 import dev.toktokhan.invalidation.core.fixture.scan.GenericSample;
 import dev.toktokhan.invalidation.core.fixture.scan.RecordSample;
 import dev.toktokhan.invalidation.core.fixture.scan.RelatedEntity;
@@ -124,6 +125,34 @@ class ClassFactsReaderTest {
     void read_classExtendsGenericSuperclass_reportsSignature() {
         ClassFacts genericFacts = ClassFactsReader.read(Bytes.of(GenericSample.class));
         assertThat(genericFacts.signature()).isEqualTo("Ljava/util/ArrayList<Ljava/lang/String;>;");
+    }
+
+    @Test
+    void readMethods_getFieldWithDifferentFieldType_collectsBothOwnerAndFieldType() {
+        // owner 는 필드를 선언한 타입(ScanSample)이고, 필드 타입은 그 필드에 담긴 값의
+        // 타입(java/util/List)입니다. 두 값이 다른 자리를 골라, 선언 타입만 모으는 구현과
+        // 필드 타입까지 모으는 구현을 구분합니다.
+        assertThat(method("relatedCount").referencedFieldOwners())
+            .containsExactly(MethodRefs.internalNameOf(ScanSample.class));
+        assertThat(method("relatedCount").referencedFieldTypes())
+            .containsExactly("java/util/List");
+    }
+
+    @Test
+    void readMethods_classLiteral_collectsClassConstant() {
+        // 클래스 리터럴은 LDC 의 Type 상수로 실립니다. String LDC 만 보는 구현은 이 값을
+        // 통째로 버립니다.
+        assertThat(method("relatedType").classConstants())
+            .containsExactly(MethodRefs.internalNameOf(RelatedEntity.class));
+        assertThat(method("relatedType").stringConstants()).isEmpty();
+    }
+
+    @Test
+    void readMethods_primitiveFieldAccess_isNotCollectedAsFieldType() {
+        // 기본 타입 필드는 참조 타입이 아니므로 후보가 될 수 없습니다. Type.getSort() 를
+        // 확인하지 않고 디스크립터를 그대로 담는 구현은 "I" 같은 값을 색인에 넣습니다.
+        assertThat(method("relatedCount").referencedFieldTypes())
+            .noneMatch(type -> type.length() == 1);
     }
 
     private MethodFacts method(String name) {
