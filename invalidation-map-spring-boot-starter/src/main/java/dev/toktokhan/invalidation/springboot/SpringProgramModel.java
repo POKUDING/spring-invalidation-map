@@ -100,6 +100,14 @@ public final class SpringProgramModel implements ProgramModel {
                     if (beanType == null || beanType.equals(declared)) {
                         continue;
                     }
+                    // 판정 근거는 타입 할당 가능성뿐입니다. 그래서 이 인터페이스를
+                    // 우연히 함께 구현한 무관한 빈도 후보가 됩니다(예: 여러 도메인이 같은
+                    // 마커 인터페이스를 구현하는 프로젝트). 워커는 후보의 본문에서 그
+                    // 메서드를 찾지 못하면 조용히 걸러내므로(CallGraphWalker
+                    // .descendTargets 참고) 무관한 후보는 결과에 엔티티를 더하지 않고,
+                    // 더하는 경우가 있어도 과잉 방향이라 4.4 원칙에 맞습니다. 반대로
+                    // 후보를 좁히면(예: 빈 이름 규칙으로 걸러내면) 실제로 꽂힌 구현체를
+                    // 놓칠 수 있어 누락이 됩니다. Task 9 부터 유지하는 트레이드오프입니다.
                     if (declared.isAssignableFrom(beanType)) {
                         found.add(MethodRefs.internalNameOf(ClassUtils.getUserClass(beanType)));
                     }

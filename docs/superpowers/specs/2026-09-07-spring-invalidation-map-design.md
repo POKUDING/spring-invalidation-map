@@ -196,9 +196,15 @@ public record EntityAccess(Set<String> entities, AccessKind kind) {}  // READ �
 
 ### 5.1 엔티티 연관 한 단계 확장
 
-`Run` 을 읽으면 `@OneToMany RunPartner` 와 `@Embedded RunLocation` 도 함께 직렬화되어 응답에
+`Run` 을 읽으면 `@OneToMany RunPartner` 처럼 연관으로 매핑된 엔티티도 함께 직렬화되어 응답에
 실립니다. 따라서 `reads` 에는 `@OneToMany` / `@ManyToOne` / `@OneToOne` / `@Embedded` 를 따라
 **한 단계** 확장을 적용합니다.
+
+확장 대상은 JPA 메타모델이 아는 타입뿐입니다. pirl-spring 의 `Run.location`(`RunLocation`)은
+`@JdbcTypeCode(SqlTypes.JSON)` 으로 `run` 테이블의 jsonb 컬럼에 직렬화되는 평범한 값
+객체이고 `@Entity` 도 `@Embeddable` 도 아니므로, 확장 대상이 아닙니다 — 따로 무효화할
+대상도 없습니다. 이 문서의 초안이 `RunLocation` 을 `@Embedded` 로 적었던 것은 실제 스키마와
+어긋난 서술이었습니다(Task 12 실측으로 확인).
 
 `writes` 에는 확장을 적용하지 않습니다. 쓰기 집합이 커지면 무효화 범위가 급격히 넓어집니다.
 
@@ -223,7 +229,6 @@ paths:
         reads:
           - com.example.run.Run
           - com.example.run.RunPartner
-          - com.example.run.RunLocation
 ```
 
 - 엔티티는 **FQCN** 으로 씁니다. 단순 이름은 패키지가 다른 동명 엔티티에서 충돌하며, 범용
@@ -323,7 +328,8 @@ invalidation-map:
 
 pirl-spring 을 첫 소비자로 물려 검증합니다. `mavenLocal()` 또는 composite build 로 연결합니다.
 
-검증 기준으로 쓸 pirl-spring 실측값입니다 (2026-09-07 기준).
+검증 기준으로 쓸 pirl-spring 값입니다 (2026-09-07 계획 시점의 소스 기준). 아래 "실제 검증
+결과" 절에 Task 12 에서 실제로 분석기를 돌려 얻은 값을 함께 적었습니다.
 
 | 항목 | 값 |
 | --- | --- |
@@ -340,11 +346,28 @@ pirl-spring 을 첫 소비자로 물려 검증합니다. `mavenLocal()` 또는 c
 
 기대 결과입니다.
 
-- `GET /v1/runs/{runId}` 의 `reads` 는 `Run`, `RunPartner`, `RunLocation` 을 포함합니다.
+- `GET /v1/runs/{runId}` 의 `reads` 는 `Run` 과 `RunPartner` 를 포함합니다. `RunLocation` 은
+  포함하지 않습니다 — 5.1 절에 적은 대로 `@Entity` 도 `@Embeddable` 도 아닌 값 객체입니다.
 - `POST /v1/runs` 의 `writes` 는 `Run`, `BadgeRunContribution`, `CrewMonthlyRunRecord` 를 포함하고,
   이벤트를 지나 도달하는 배지 엔티티도 포함합니다.
 - 미해결 엔드포인트는 `SlotInstanceRepositoryImpl.upsert` 를 거치는 write 를 제외하면 없어야
   합니다. 네이티브 SQL 역매핑이 성공하면 그것도 해결됩니다.
+
+### 8.4 실제 검증 결과 (Task 12, 2026-09-08 실측)
+
+- 엔드포인트 219개(계획 시점 소스의 211 과 다릅니다 — 그 사이 커밋으로 늘었습니다).
+- 위 기대 결과 네 항목 모두 실제로 나왔습니다. `SlotInstanceRepositoryImpl.upsert` 의
+  `INSERT INTO slot_instance … ON CONFLICT DO NOTHING` 도 테이블명 역매핑으로 풀려
+  `SlotInstance` 가 `writes` 에 나타났습니다.
+- `resolved: false` 8개는 전부 정당했습니다 — 엔티티를 건드리지 않는 presigned URL 발급
+  1개와, 컨트롤러 전체가 HTTP 410 을 던지는 폐기된 admin API 7개입니다.
+- 분석 자체는 674ms, 첫 스펙 요청 왕복은 2.49s(springdoc 오버헤드 포함), 이후 캐시로 7~86ms.
+
+**이 실측이 증명하지 않는 것:** `resolved: false` 목록이 깨끗하다는 사실은 누락이 없다는
+증거가 아닙니다. 조용한 누락은 정의상 그 목록에 나타나지 않습니다. pirl-spring 이 마침
+`em.persist` 계열과 팩터리 이벤트 발행 관용구를 쓰지 않아 그 경로가 밟히지 않았을 뿐이며,
+그 관용구들의 누락은 이후 최종 리뷰에서 별도로 찾아 고쳤습니다. 누락 방향을 확인하려면
+미해결 목록이 아니라 관용구별 커버리지를 봐야 합니다.
 
 ## 9. 검토했으나 채택하지 않은 방안
 
@@ -444,9 +467,35 @@ APT 의 고유한 장점은 컴파일을 실패시킬 수 있다는 점입니다
 | `RequestMappingInfo.getPathPatternsCondition()` / `getMethodsCondition()` | Framework 6.1.14 | Framework 7.0.7 |
 | `BeanFactory.getType(String, boolean)` | Framework 6.1.14 | Framework 7.0.7 |
 | `AutoConfigurationPackages.get(BeanFactory)` | Boot 3.3.5 | Boot 4.0.6 |
+| Hibernate ORM (엔티티 메타모델만 사용) | 6.5.3 | 7.2.12 |
 
 Spring Data 4.x 에만 있는 `RepositoryFragment.getImplementationClass()` 는 쓰지 않습니다.
 양쪽에 다 있는 `getImplementation()` 을 써서 코드 경로를 하나로 유지합니다.
+
+**API 는 같지만 동작이 다른 자리가 두 곳 있습니다.** 둘 다 라이브러리 안에서 흡수합니다.
+
+1. `RepositoryInformation.getFragments()` — spring-data-commons 3.3.5 는 "프래그먼트
+   인터페이스 이름 + `Impl`" 관용구(`FooRepositoryCustom` / `FooRepositoryCustomImpl`)의
+   구현체를 통째로 보고하지 않습니다. 원인은 `RepositoryFactoryBeanSupport` 가
+   `customImplementation` 과 `repositoryFragments` 를 별도 필드로 두고
+   `getRepositoryInformation()` 이 전자만 반영하던 것을 4.0.5 가 `cachedFragments` 로
+   통합한 데 있습니다(두 세대 jar 를 `javap` 로 대조 확인). 리포지토리 인터페이스와 그
+   상위 인터페이스 전체를 빈 팩토리에서 직접 스캔해 메웁니다.
+2. **기본 테이블명 파생 규칙** — Boot 3.x 기본값인 Hibernate 6 의
+   `CamelCaseToUnderscoresNamingStrategy` 와 Boot 4.x 기본값인 Hibernate 7 의
+   `PhysicalNamingStrategySnakeCaseImpl` 은 밑줄 삽입 조건이 다릅니다.
+
+   ```
+   6.5.3   isLowerCase(before) && isUpperCase(current) && isLowerCase(after)
+   7.2.12  (isLowerCase(before) || isDigit(before)) && isUpperCase(current)
+           && (isLowerCase(after) || isDigit(after))
+   ```
+
+   그래서 숫자와 대문자가 맞닿는 이름에서 실제 테이블명이 갈립니다 — `HTTPCache2Entry`
+   는 Boot 3.3.5 에서 `httpcache2entry`, Boot 4.0.6 에서 `httpcache2_entry` 입니다(두
+   클래스패스에서 Hibernate 가 실제로 만든 테이블을 읽어 확인). 네이티브 SQL 의 테이블명
+   역매핑이 세대에 따라 실패하면 그 엔티티가 조용히 누락되므로, `EntityIndex` 는 두 규칙의
+   결과를 모두 후보로 등록합니다(4.4 원칙에 따라 과잉 방향).
 
 ASM 버전은 읽을 클래스 파일 버전을 지원하는 것으로 맞춥니다. ASM 9.7.1 은 Java 22(major 66)
 까지 읽으므로 Java 21 로 컴파일한 소비자를 덮습니다. 소비자가 더 새 JDK 로 옮기면 ASM 을
