@@ -71,11 +71,21 @@ public final class ClassFactsReader {
         public FieldVisitor visitField(int access, String name, String descriptor,
             String fieldSignature, Object value) {
             Map<String, AnnotationValues> fieldAnnotations = new LinkedHashMap<>();
-            fields.add(new FieldFacts(name, descriptor, fieldSignature, fieldAnnotations));
             return new FieldVisitor(API) {
                 @Override
                 public AnnotationVisitor visitAnnotation(String annotationDescriptor, boolean isVisible) {
                     return new ValueCollector(annotationDescriptor, fieldAnnotations::put);
+                }
+
+                @Override
+                public void visitEnd() {
+                    // 방문이 끝난 뒤에 FieldFacts 를 만듭니다. 방문 전에 만들면 그 시점의
+                    // 가변 맵이 FieldFacts.annotations() 로 그대로 노출됩니다 — 클래스·메서드
+                    // 레벨 어노테이션은 불변 복사본을 담는데 필드만 예외였습니다.
+                    // ASM 은 각 필드의 visitEnd 를 다음 visitField 보다 먼저 부르므로
+                    // 필드 순서는 그대로 유지됩니다.
+                    fields.add(new FieldFacts(name, descriptor, fieldSignature,
+                        Collections.unmodifiableMap(new LinkedHashMap<>(fieldAnnotations))));
                 }
             };
         }
