@@ -98,6 +98,9 @@ public final class InvalidationMapAnalyzer {
 
         Set<String> reads = new TreeSet<>();
         Set<String> writes = new TreeSet<>();
+        // 리졸버가 "담당은 맞지만 엔티티를 특정하지 못했다"고 알린 자리입니다. 같은 호출
+        // 지점이 트랜잭션 상태마다 다시 방문될 수 있으므로 Set 으로 중복을 지웁니다.
+        Set<String> unidentified = new LinkedHashSet<>();
 
         WalkResult walk = walker.walk(handler, (callee, state) -> {
             ResolutionContext context = new WalkResolutionContext(
@@ -106,6 +109,14 @@ public final class InvalidationMapAnalyzer {
                 Optional<EntityAccess> access = resolver.resolve(callee, context);
                 if (access.isPresent()) {
                     EntityAccess found = access.get();
+                    if (!found.isIdentified()) {
+                        // 빈 엔티티 집합을 그냥 더하면 아무 일도 일어나지 않아 조용한 누락이
+                        // 됩니다(설계 문서 4.4절). 사유로 남겨 소비자가 이 엔드포인트를
+                        // 신뢰할 수 없다는 것을 알게 합니다.
+                        unidentified.add("엔티티를 특정하지 못했습니다: " + callee
+                            + " (호출한 메서드: " + state.caller().ref() + ")");
+                        return;
+                    }
                     (found.kind() == AccessKind.WRITE ? writes : reads).addAll(found.entities());
                     return;
                 }
@@ -125,6 +136,7 @@ public final class InvalidationMapAnalyzer {
         }
 
         List<String> unresolved = new ArrayList<>(walk.unresolved());
+        unresolved.addAll(unidentified);
         if (walk.budgetExceeded()) {
             unresolved.add("호출 사슬이 노드 예산 " + options.nodeBudget() + " 을 넘었습니다");
         }
