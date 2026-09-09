@@ -90,4 +90,79 @@ class SqlTableExtractorTest {
     void kindOf_select_isRead() {
         assertThat(SqlTableExtractor.kindOf(" select 1 ")).isEqualTo(AccessKind.READ);
     }
+
+    @Test
+    void kindOf_updateAfterCommonTableExpression_isWrite() {
+        // 첫 토큰만 보는 구현은 head 가 WITH 라 READ 로 판정합니다. 쓰기를 읽기로 보고하면
+        // 엔티티가 writes 에 안 들어가 소비자가 무효화하지 않습니다 — 누락과 같은 방향입니다.
+        assertThat(SqlTableExtractor.kindOf(
+            "WITH ranked AS (SELECT id FROM trip_log) "
+                + "UPDATE trip_log SET title = 'x' WHERE id IN (SELECT id FROM ranked)"))
+            .isEqualTo(AccessKind.WRITE);
+    }
+
+    @Test
+    void kindOf_insertAfterCommonTableExpression_isWrite() {
+        assertThat(SqlTableExtractor.kindOf(
+            "WITH staged AS (SELECT id FROM staging_log) INSERT INTO trip_log SELECT id FROM staged"))
+            .isEqualTo(AccessKind.WRITE);
+    }
+
+    @Test
+    void kindOf_selectAfterCommonTableExpression_staysRead() {
+        // CTE 를 지나 찾은 첫 문장이 SELECT 면 읽기입니다. CTE 안의 토큰을 무작정 훑어
+        // 쓰기 키워드를 찾는 구현은 이 단정을 깨거나, 반대로 읽기를 쓰기로 승격해
+        // reads 에서 엔티티를 잃습니다.
+        assertThat(SqlTableExtractor.kindOf(
+            "WITH ranked AS (SELECT id FROM trip_log WHERE deleted_at IS NULL) "
+                + "SELECT * FROM ranked"))
+            .isEqualTo(AccessKind.READ);
+    }
+
+    @Test
+    void kindOf_updateAfterBlockComment_isWrite() {
+        assertThat(SqlTableExtractor.kindOf("/* batch upsert */ UPDATE trip_log SET title = 'x'"))
+            .isEqualTo(AccessKind.WRITE);
+    }
+
+    @Test
+    void kindOf_updateAfterLineComment_isWrite() {
+        assertThat(SqlTableExtractor.kindOf("-- soft delete\nUPDATE trip_log SET deleted_at = now()"))
+            .isEqualTo(AccessKind.WRITE);
+    }
+
+    @Test
+    void kindOf_selectWithWriteKeywordInsideStringLiteral_staysRead() {
+        // 'DELETE' 는 데이터이지 문장이 아닙니다. 읽기를 쓰기로 승격하면 그 엔티티가
+        // reads 에서 사라져, 이 엔드포인트를 무효화 대상으로 찾지 못하게 됩니다.
+        assertThat(SqlTableExtractor.kindOf(
+            "SELECT * FROM trip_log WHERE action = 'DELETE'")).isEqualTo(AccessKind.READ);
+    }
+
+    @Test
+    void kindOf_selectWithWriteKeywordInsideComment_staysRead() {
+        assertThat(SqlTableExtractor.kindOf(
+            "SELECT * FROM trip_log /* not an UPDATE */")).isEqualTo(AccessKind.READ);
+    }
+
+    @Test
+    void entities_tableNameOnlyInsideComment_isNotCollected() {
+        // 주석 안의 "from trip_log" 는 실제 접근이 아닙니다. 주석을 걷어내지 않는 구현은
+        // Trip 을 후보로 잡습니다(과잉이라 치명적이지는 않지만 정확도가 떨어집니다).
+        assertThat(SqlTableExtractor.entities(
+            "SELECT 1 /* copied from trip_log */", entities)).isEmpty();
+    }
+
+    @Test
+    void entities_tableNameOnlyInsideStringLiteral_isNotCollected() {
+        assertThat(SqlTableExtractor.entities(
+            "SELECT 'from trip_log' AS note", entities)).isEmpty();
+    }
+
+    @Test
+    void entities_updateAfterCommonTableExpression_resolvesTargetTable() {
+        assertThat(SqlTableExtractor.entities(
+            "WITH ranked AS (SELECT id FROM trip_leg) UPDATE trip_log SET title = 'x'", entities))
+            .containsExactlyInAnyOrder(TRIP, LEG);
+    }
 }
