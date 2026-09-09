@@ -1,6 +1,7 @@
 package dev.toktokhan.invalidation.springboot;
 
 import jakarta.persistence.EntityManagerFactory;
+import org.springdoc.core.customizers.GlobalOperationCustomizer;
 import org.springdoc.core.customizers.OperationCustomizer;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
@@ -22,8 +23,8 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
  * 로 받아 첫 사용 시점에 꺼냅니다.
  */
 @AutoConfiguration
-@ConditionalOnClass({OperationCustomizer.class, EntityManagerFactory.class,
-    RequestMappingHandlerMapping.class})
+@ConditionalOnClass({OperationCustomizer.class, GlobalOperationCustomizer.class,
+    EntityManagerFactory.class, RequestMappingHandlerMapping.class})
 @ConditionalOnProperty(prefix = "invalidation-map", name = "enabled", havingValue = "true",
     matchIfMissing = true)
 @EnableConfigurationProperties(InvalidationMapProperties.class)

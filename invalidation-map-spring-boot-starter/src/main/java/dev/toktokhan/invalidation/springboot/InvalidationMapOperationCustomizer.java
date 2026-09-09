@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.springdoc.core.customizers.OperationCustomizer;
+import org.springdoc.core.customizers.GlobalOperationCustomizer;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfigurationPackages;
@@ -30,8 +30,29 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
  *
  * <p>분석은 첫 스펙 요청 때 한 번만 합니다. 부팅 시간이 늘지 않고, Swagger 를 열지 않는
  * 환경에서는 아예 돌지 않습니다.
+ *
+ * <p>{@code OperationCustomizer} 가 아니라 {@code GlobalOperationCustomizer} 를 구현합니다
+ * (둘은 같은 {@code customize} 메서드 하나뿐인 마커 인터페이스 관계입니다 — {@code
+ * GlobalOperationCustomizer extends OperationCustomizer}). springdoc 은 이 둘을 다르게
+ * 취급합니다: {@code springdoc.group-configs} 로 API 를 여러 그룹(예: user/admin)으로 나누면,
+ * 평범한 {@code OperationCustomizer} 빈은 그룹이 없는 기본 {@code /v3/api-docs} 에만 적용되고
+ * {@code /v3/api-docs/{group}} 에는 적용되지 않습니다. springdoc 내부의 {@code
+ * SpringDocCustomizers} 가 {@code operationCustomizers} 와 {@code globalOperationCustomizers}
+ * 를 서로 다른 필드로 나눠 들고 있고, {@code MultipleOpenApiWebMvcResource}(그룹별 스펙을
+ * 만드는 클래스)는 그중 {@code globalOperationCustomizers} 만 모든 그룹에 공통으로 적용합니다
+ * (springdoc-openapi-starter-common 2.5.0/3.0.1 바이트코드로 직접 확인).
+ *
+ * <p>실측: pirl-spring(Boot 3.3.5, 엔드포인트 211개, {@code springdoc.group-configs} 로
+ * user/admin/internal 세 그룹 운용)에 실제로 붙여 확인했습니다(Task 12). 그룹이 없는
+ * {@code /v3/api-docs} 에는 170개 경로 전부에 {@code x-entities} 가 실렸지만, {@code
+ * /v3/api-docs/user} 와 {@code /v3/api-docs/admin} 에는 하나도 실리지 않았습니다 — 이 라이브러리의
+ * 픽스처는 그룹을 쓰지 않아 Task 10, 11 어느 리뷰에서도 이 경로가 드러나지 않았습니다. 그룹을
+ * 나누는 실제 프로젝트에서는 이 빠짐이 매 요청마다 재발했을 것이므로(픽스처가 아니라 실제
+ * 배포 대상에서), 조용한 누락을 금지하는 4.4절 원칙에 정면으로 걸립니다.
+ * {@code GroupedApiDocsIntegrationTest} 가 그룹이 있을 때도 확장이 실리는지 재발 방지로
+ * 고정합니다.
  */
-public final class InvalidationMapOperationCustomizer implements OperationCustomizer {
+public final class InvalidationMapOperationCustomizer implements GlobalOperationCustomizer {
 
     private static final Log log = LogFactory.getLog(InvalidationMapOperationCustomizer.class);
     private static final String EXTENSION = "x-entities";
