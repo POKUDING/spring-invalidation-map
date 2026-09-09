@@ -19,3 +19,44 @@ dependencies {
     testImplementation 'org.springdoc:springdoc-openapi-starter-webmvc-api:3.0.1'
     testRuntimeOnly 'com.h2database:h2'
 }
+
+// 같은 테스트 코드를 Boot 3.x 클래스패스로 한 번 더 돌립니다.
+// "3.x 도 지원한다"는 주장을 테스트가 확인하게 하려는 것입니다.
+sourceSets {
+    boot3Test {
+        java.srcDir 'src/test/java'
+        resources.srcDir 'src/test/resources'
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+
+dependencies {
+    boot3TestImplementation project(':invalidation-map-core')
+    boot3TestImplementation platform('org.springframework.boot:spring-boot-dependencies:3.3.5')
+    boot3TestImplementation 'org.springframework.boot:spring-boot-starter-web'
+    boot3TestImplementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    boot3TestImplementation 'org.springframework.boot:spring-boot-starter-test'
+    boot3TestImplementation 'org.springdoc:springdoc-openapi-starter-webmvc-api:2.5.0'
+    boot3TestImplementation platform('org.junit:junit-bom:5.10.3')
+    boot3TestImplementation 'org.junit.jupiter:junit-jupiter'
+    boot3TestImplementation 'org.assertj:assertj-core:3.26.3'
+    boot3TestRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    boot3TestRuntimeOnly 'com.h2database:h2'
+}
+
+tasks.register('boot3Test', Test) {
+    description = 'Spring Boot 3.x 클래스패스로 스타터 테스트를 돌립니다.'
+    group = 'verification'
+    testClassesDirs = sourceSets.boot3Test.output.classesDirs
+    classpath = sourceSets.boot3Test.runtimeClasspath
+    useJUnitPlatform()
+    testLogging {
+        events 'failed'
+        exceptionFormat 'full'
+    }
+}
+
+tasks.named('check') {
+    dependsOn 'boot3Test'
+}
