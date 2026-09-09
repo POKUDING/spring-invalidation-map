@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.toktokhan.invalidation.core.MethodRef;
 import dev.toktokhan.invalidation.core.MethodRefs;
+import dev.toktokhan.invalidation.core.ProgramModel;
 import dev.toktokhan.invalidation.core.fixture.event.TripEventListeners;
 import dev.toktokhan.invalidation.core.fixture.service.AbstractTransactionalWorker;
 import dev.toktokhan.invalidation.core.fixture.service.AncestorBase;
@@ -18,15 +19,20 @@ import dev.toktokhan.invalidation.core.index.ClassRepository;
 import dev.toktokhan.invalidation.core.index.ListenerIndex;
 import dev.toktokhan.invalidation.core.support.FakeProgramModel;
 import dev.toktokhan.invalidation.core.support.HidingProgramModel;
+import dev.toktokhan.invalidation.core.support.SyntheticClassProgramModel;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 
 class CallGraphWalkerTest {
 
     private static final String BASE = "dev/toktokhan/invalidation/core/fixture";
+    private static final String JTA_SERVICE = BASE + "/synthetic/JtaService";
 
     private final FakeProgramModel program = FakeProgramModel.create()
         .withImplementation(TripPort.class, TripPortAdapter.class)
@@ -314,6 +320,57 @@ class CallGraphWalkerTest {
         exact.walk(ref("write"), visitor);
 
         assertThat(seen).contains(program.ref(TripPortAdapter.class, "deepest"));
+    }
+
+    /**
+     * JTA 의 {@code @Transactional} 도 트랜잭션 경계로 인정하는지 확인합니다.
+     *
+     * <p>이 자리는 지금까지 어떤 테스트도 밟지 않았습니다(뮤테이션으로 확인: 워커의
+     * 디스크립터 목록에서 {@code Ljakarta/transaction/Transactional;} 을 지워도 전체가
+     * GREEN 이었습니다). 원장은 "테스트 클래스패스에 jakarta.transaction-api 가 없어 새
+     * 의존성이 필요하다" 는 이유로 미뤘지만, 새 의존성은 필요하지 않습니다 — 코어는
+     * 어노테이션을 디스크립터 문자열로만 다루므로 ASM 으로 그 문자열을 직접 써 넣은
+     * 클래스를 합성하면 같은 경로를 밟습니다. 이 저장소는 이미 브릿지 메서드 순서를
+     * 재현할 때 같은 기법을 씁니다.
+     */
+    @Test
+    void walk_jakartaTransactionalAnnotation_marksInTransaction() {
+        MethodRef handler = new MethodRef(JTA_SERVICE, "store", "(Ljava/lang/String;)V");
+        ProgramModel withSynthetic = new SyntheticClassProgramModel(
+            program, Map.of(JTA_SERVICE, synthesizeJtaTransactionalClass()));
+        ClassRepository syntheticClasses = new ClassRepository(withSynthetic);
+        CallGraphWalker syntheticWalker = new CallGraphWalker(syntheticClasses, withSynthetic,
+            new ListenerIndex(syntheticClasses, withSynthetic.eventListeners()),
+            List.of(BASE), 20_000);
+
+        syntheticWalker.walk(handler, visitor);
+
+        assertThat(stateAt.get(storeOnPort()).inTransaction()).isTrue();
+    }
+
+    /**
+     * {@code @jakarta.transaction.Transactional} 이 붙은 메서드 하나를 가진 클래스를
+     * 합성합니다. 본문은 {@link TripPort#store} 를 부르므로, 그 호출 지점의 워커 상태로
+     * 트랜잭션 판정이 드러납니다.
+     */
+    private static byte[] synthesizeJtaTransactionalClass() {
+        ClassWriter writer = new ClassWriter(0);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, JTA_SERVICE, null, "java/lang/Object", null);
+
+        MethodVisitor store = writer.visitMethod(
+            Opcodes.ACC_PUBLIC, "store", "(Ljava/lang/String;)V", null, null);
+        store.visitAnnotation("Ljakarta/transaction/Transactional;", true).visitEnd();
+        store.visitCode();
+        store.visitInsn(Opcodes.ACONST_NULL);
+        store.visitVarInsn(Opcodes.ALOAD, 1);
+        store.visitMethodInsn(Opcodes.INVOKEINTERFACE,
+            MethodRefs.internalNameOf(TripPort.class), "store", "(Ljava/lang/String;)V", true);
+        store.visitInsn(Opcodes.RETURN);
+        store.visitMaxs(2, 2);
+        store.visitEnd();
+
+        writer.visitEnd();
+        return writer.toByteArray();
     }
 
     private MethodRef ref(String methodName) {
