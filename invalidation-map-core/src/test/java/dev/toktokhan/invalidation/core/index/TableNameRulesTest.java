@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link EntityIndex} 의 기본 테이블명 규칙 두 가지를 직접 확인합니다. 둘 다 조회 표에
+ * {@link EntityIndex} 의 기본 테이블명 규칙 세 가지를 직접 확인합니다. 둘 다 조회 표에
  * 후보로 등록되므로({@code EntityIndex#buildTableIndex}), 어느 한쪽만 맞아도 조회는
  * 성공합니다. 그래서 이 규칙들은 통합 테스트({@code EntityIndexTest})만으로는 서로 다른
  * 결과를 내는지 확인할 수 없고, 함수 하나씩 직접 불러야 합니다.
@@ -81,5 +81,42 @@ class TableNameRulesTest {
     @Test
     void springPhysicalNamingSnakeCase_singleLetterName_lowercasesWithoutUnderscore() {
         assertThat(EntityIndex.springPhysicalNamingSnakeCase("X")).isEqualTo("x");
+    }
+    @Test
+    void hibernate7SnakeCase_uppercasePrecededByDigit_insertsUnderscore() {
+        // Hibernate 6 계열은 앞 글자가 소문자일 때만 밑줄을 넣어 item2box 가 됩니다.
+        // Hibernate 7 계열은 숫자도 소문자처럼 취급해 여기서 결과가 갈립니다.
+        assertThat(EntityIndex.hibernate7SnakeCase("Item2Box")).isEqualTo("item2_box");
+        assertThat(EntityIndex.springPhysicalNamingSnakeCase("Item2Box")).isEqualTo("item2box");
+    }
+
+    @Test
+    void hibernate7SnakeCase_uppercaseFollowedByDigit_insertsUnderscore() {
+        // 뒷 글자 조건에도 숫자가 들어갑니다.
+        assertThat(EntityIndex.hibernate7SnakeCase("TripI2")).isEqualTo("trip_i2");
+        assertThat(EntityIndex.springPhysicalNamingSnakeCase("TripI2")).isEqualTo("tripi2");
+    }
+
+    @Test
+    void hibernate7SnakeCase_consecutiveUppercaseThenDigitBoundary_matchesRunningHibernate7() {
+        // 두 클래스패스에서 Hibernate 가 실제로 만든 테이블명입니다 —
+        // Boot 3.3.5(Hibernate 6.5.3) HTTPCACHE2ENTRY / Boot 4.0.6(Hibernate 7.2.12)
+        // HTTPCACHE2_ENTRY. 연속 대문자와 숫자 경계를 함께 가진 이름에서만 갈리므로,
+        // 이 조합이 두 규칙을 실제로 구분하는 유일한 형태입니다.
+        assertThat(EntityIndex.hibernate7SnakeCase("HTTPCache2Entry")).isEqualTo("httpcache2_entry");
+        assertThat(EntityIndex.springPhysicalNamingSnakeCase("HTTPCache2Entry"))
+            .isEqualTo("httpcache2entry");
+        // 순진한 규칙도 이 이름을 덮지 못합니다 — 그래서 세 번째 규칙이 필요합니다.
+        assertThat(EntityIndex.camelToSnake("HTTPCache2Entry")).isEqualTo("h_t_t_p_cache2_entry");
+    }
+
+    @Test
+    void hibernate7SnakeCase_plainCamelCase_matchesHibernate6Rule() {
+        // 숫자가 없으면 두 규칙의 결과가 같아야 합니다. 조건을 잘못 넓히면 여기서 갈립니다.
+        for (String name : new String[] {"TripLeg", "HTTPServer", "TripID", "tripleg", "X"}) {
+            assertThat(EntityIndex.hibernate7SnakeCase(name))
+                .as("숫자가 없는 이름 %s", name)
+                .isEqualTo(EntityIndex.springPhysicalNamingSnakeCase(name));
+        }
     }
 }
