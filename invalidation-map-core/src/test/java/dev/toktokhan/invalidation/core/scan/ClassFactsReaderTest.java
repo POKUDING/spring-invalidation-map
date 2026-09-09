@@ -149,10 +149,12 @@ class ClassFactsReaderTest {
 
     @Test
     void readMethods_primitiveFieldAccess_isNotCollectedAsFieldType() {
-        // 기본 타입 필드는 참조 타입이 아니므로 후보가 될 수 없습니다. Type.getSort() 를
-        // 확인하지 않고 디스크립터를 그대로 담는 구현은 "I" 같은 값을 색인에 넣습니다.
-        assertThat(method("relatedCount").referencedFieldTypes())
-            .noneMatch(type -> type.length() == 1);
+        // version() 은 int 필드만 읽습니다 — GETFIELD 는 있으므로 owner 는 잡히지만
+        // 참조 타입 후보는 없어야 합니다. Type.getSort() 를 확인하지 않고 디스크립터를
+        // 그대로 담는 구현은 여기에 "I" 를 넣습니다.
+        assertThat(method("version").referencedFieldOwners())
+            .containsExactly(MethodRefs.internalNameOf(ScanSample.class));
+        assertThat(method("version").referencedFieldTypes()).isEmpty();
     }
 
     private MethodFacts method(String name) {

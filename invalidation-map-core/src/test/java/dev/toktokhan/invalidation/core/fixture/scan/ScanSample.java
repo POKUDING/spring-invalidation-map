@@ -14,6 +14,9 @@ public class ScanSample {
 
     private String name;
 
+    /** 기본 타입 필드입니다. 읽어도 참조 타입 후보가 생기지 않아야 합니다. */
+    private int version;
+
     /**
      * 어노테이션 값 중 enum 단일 값({@code fetch}), enum 배열({@code cascade}),
      * 클래스 값({@code targetEntity})을 한 번에 담는 필드입니다. 제네릭 필드라
@@ -35,6 +38,11 @@ public class ScanSample {
      */
     public int relatedCount() {
         return this.related.size();
+    }
+
+    /** 기본 타입 필드만 읽습니다. GETFIELD 는 있지만 참조 타입 후보는 없어야 합니다. */
+    public int version() {
+        return this.version;
     }
 
     /** LDC 로 실린 클래스 리터럴을 담습니다. */
