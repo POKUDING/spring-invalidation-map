@@ -28,11 +28,8 @@ import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.support.BeanDefinitionRegistry;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.test.annotation.DirtiesContext;
-import org.springframework.util.ClassUtils;
 import org.springframework.util.ReflectionUtils;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
@@ -132,45 +129,30 @@ class SpringProgramModelTest {
     /**
      * Spring Data 는 클래스패스에서 이름으로 찾은 프래그먼트 구현체를 DI 를 위해 실제
      * 애플리케이션 빈으로도 등록합니다({@code NoteRepositoryCustomImpl} 도 확인:
-     * {@code noteRepositoryCustomImpl} 이라는 이름의 빈이 실제로 등록됩니다 — spring-data-commons
-     * 4.0.5 의 {@code RepositoryBeanDefinitionBuilder.potentiallyRegisterFragmentImplementation}).
-     * 그래서 이 픽스처에서는 {@code implementationsOf} 의 빈 팩토리 스캔 절반만으로도 이
-     * 단정이 우연히 통과합니다 — {@code fragmentImplementations} 색인을 완전히 비워도 결과가
-     * 똑같습니다(뮤테이션으로 확인. 태스크 9 보고서 참고).
+     * {@code noteRepositoryCustomImpl} 이라는 이름의 빈이 실제로 등록됩니다). 그래서 이
+     * 픽스처를 {@code NoteRepositoryCustom}(프래그먼트 인터페이스 자신) 으로 조회하면
+     * {@code implementationsOf} 의 빈 팩토리 스캔 절반만으로도 이 단정이 우연히 통과합니다
+     * ({@code NoteRepositoryCustomImpl} 이 그 인터페이스를 직접 구현하므로 {@code
+     * declared.isAssignableFrom(beanType)} 가 그냥 참입니다).
      *
-     * <p>그래서 이 테스트는 그 빈 정의를 지운 뒤 다시 확인합니다. 리포지토리 프록시는 이미
-     * 만들어질 때 프래그먼트 구현체 인스턴스를 붙잡아 뒀으므로({@code RepositoryComposition}),
-     * 빈 정의를 지워도 {@code RepositoryInformation.getFragments()} 가 돌려주는 결과는
-     * 그대로입니다 — 오직 {@code getBeanDefinitionNames()} 스캔에서만 사라집니다. 이렇게 하면
-     * {@code fragmentImplementations} 색인이 실제로 이 결과를 만드는지 진짜로 검증됩니다.
+     * <p>그래서 이 테스트는 대신 {@link NoteJpaRepository}(리포지토리 인터페이스 자신, pirl-spring
+     * 의 {@code NoteService} 가 실제로 필드 타입으로 쓰는 정적 타입)로 조회합니다.
+     * {@code NoteRepositoryCustomImpl} 은 {@code NoteJpaRepository} 를 구현하지 않으므로
+     * ({@code NoteRepositoryCustom} 만 구현), {@code declared.isAssignableFrom(beanType)} 는
+     * 이 키에 대해 항상 거짓입니다 — 빈 팩토리 스캔 절반은 이 조회에 대해 어떤 입력에서도
+     * 결과를 낼 수 없습니다. 그러므로 이 단정이 통과한다면 {@code byFragment} 색인(또는 그
+     * 색인을 보강하는 경로) 만이 만든 결과입니다. 빈 정의를 지웠다 다시 조회하는 방식(이전
+     * 버전)보다 이 방식이 낫습니다 — 원래 방식은 spring-data-commons 3.3.5 에서 판별력을
+     * 잃습니다: 그 버전에서는 {@code NoteRepositoryCustomImpl} 의 빈 정의를 지우면
+     * {@code RepositoryInformation.getFragments()} 자체가 이 리포지토리의 프래그먼트를 통째로
+     * 잃어버려서(실측: Task 11, boot3Test), "지워도 색인은 살아남는다"는 전제 자체가 3.x 에서
+     * 성립하지 않습니다. 이 조회 방식은 빈 정의를 건드리지 않으므로 3.x 와 4.x 양쪽에서 같은
+     * 논리로 통합니다.
      */
     @Test
-    @DirtiesContext(methodMode = DirtiesContext.MethodMode.AFTER_METHOD)
-    void implementationsOf_repositoryFragment_findsNonBeanImplementation() {
-        String fragmentImplBeanName = beanNameOf(NoteRepositoryCustomImpl.class);
-        ((BeanDefinitionRegistry) context.getBeanFactory()).removeBeanDefinition(fragmentImplBeanName);
-
-        SpringProgramModel isolated = new SpringProgramModel(context.getBeanFactory(), handlerMapping,
-            entityManagerFactory, getClass().getClassLoader());
-
-        assertThat(isolated.implementationsOf(MethodRefs.internalNameOf(NoteRepositoryCustom.class)))
+    void implementationsOf_repositoryInterfaceCallSite_findsFragmentImplementation() {
+        assertThat(model.implementationsOf(MethodRefs.internalNameOf(NoteJpaRepository.class)))
             .contains(MethodRefs.internalNameOf(NoteRepositoryCustomImpl.class));
-    }
-
-    /** 빈 이름 짓기 규칙에 기대지 않도록, 타입으로 실제 등록된 빈 이름을 찾습니다. */
-    private String beanNameOf(Class<?> type) {
-        for (String beanName : context.getBeanFactory().getBeanDefinitionNames()) {
-            Class<?> beanType;
-            try {
-                beanType = context.getBeanFactory().getType(beanName, false);
-            } catch (RuntimeException e) {
-                continue;
-            }
-            if (beanType != null && ClassUtils.getUserClass(beanType).equals(type)) {
-                return beanName;
-            }
-        }
-        throw new IllegalStateException("No bean registered for " + type);
     }
 
     @Test
