@@ -90,12 +90,31 @@ subprojects {
 
     // 서명 키가 있을 때만 서명합니다. Maven Central 업로드에는 서명이 필수지만,
     // 로컬에서 publishToMavenLocal 로 확인할 때는 키 없이 돌아야 합니다.
-    // 키는 gradle.properties 나 환경 변수(ORG_GRADLE_PROJECT_signingKey,
-    // ORG_GRADLE_PROJECT_signingPassword)로 넣습니다.
+    //
+    // 경로가 둘입니다.
+    //
+    // 1. `signing.gnupg.keyName` 이 있으면 로컬 gpg 실행 파일에 서명을 맡깁니다.
+    //    GnuPG 가 자기 형식의 키를 직접 읽으므로 형식 문제가 없습니다. 이 장비에서
+    //    GnuPG 2.5.18 로 만든 키를 armor 로 내보내 useInMemoryPgpKeys 에 넘겼을 때
+    //    "Could not read PGP secret key" 가 났습니다. 키 자체는 정상이었습니다 —
+    //    패킷은 secret key packet 하나이고 보호 방식은 iter+salt S2K / AES128 /
+    //    SHA1 protection 이며, Gradle 이 받는 문자열도 개행 56개가 살아 있는 온전한
+    //    armor 블록이었습니다(Java Properties 로 직접 읽어 확인). Gradle 8.10.2 가
+    //    쓰는 Bouncy Castle 이 이 키를 파싱하지 못하는 것으로 보고 gpg 위임으로
+    //    우회합니다.
+    // 2. `signingKey` 가 있으면 그 armor 문자열로 서명합니다. gpg 실행 파일이 없는
+    //    CI 를 위한 경로입니다.
+    //
+    // 두 경로 모두 프로퍼티는 gradle.properties 나 환경 변수
+    // (ORG_GRADLE_PROJECT_<이름>)로 넣습니다.
     signing {
+        def gnupgKeyName = findProperty('signing.gnupg.keyName')
         def signingKey = findProperty('signingKey')
         def signingPassword = findProperty('signingPassword')
-        if (signingKey) {
+        if (gnupgKeyName) {
+            useGpgCmd()
+            sign publishing.publications.maven
+        } else if (signingKey) {
             useInMemoryPgpKeys(signingKey as String, signingPassword as String)
             sign publishing.publications.maven
         }
