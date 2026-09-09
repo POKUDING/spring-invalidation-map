@@ -20,6 +20,17 @@ import org.objectweb.asm.Opcodes;
  *                              이 경우 {@code newTypes} 에는 아무것도 잡히지 않고 이 필드로만
  *                              드러납니다({@link dev.toktokhan.invalidation.core.resolve.QuerydslResolver}
  *                              참고)
+ * @param referencedFieldTypes  {@code GETSTATIC}/{@code GETFIELD} 로 읽은 필드의 <b>선언
+ *                              타입</b>(디스크립터)의 internal name. {@code owner} 와 다른
+ *                              값입니다 — {@code owner} 는 필드를 선언한 클래스이고 이쪽은
+ *                              필드에 담긴 값의 타입입니다. {@code private final QTrip held
+ *                              = QTrip.trip;} 을 {@code this.held} 로 쓰는 코드에서는
+ *                              {@code owner} 가 그 리포지토리 클래스라 Q클래스가
+ *                              {@code referencedFieldOwners} 에 나타나지 않고 이 집합에만
+ *                              나타납니다. 배열 필드는 원소 타입을 담습니다
+ * @param classConstants        {@code LDC} 로 실린 클래스 리터럴({@code Trip.class})의
+ *                              internal name. {@code em.find(Trip.class, id)} 처럼 엔티티를
+ *                              클래스 리터럴로만 지목하는 호출에서 유일한 단서입니다
  * @param lambdaBodies        {@code INVOKEDYNAMIC} 부트스트랩 인자가 가리키는 메서드
  */
 public record MethodFacts(
@@ -30,6 +41,8 @@ public record MethodFacts(
     List<String> stringConstants,
     Set<String> writtenOwnFields,
     Set<String> referencedFieldOwners,
+    Set<String> referencedFieldTypes,
+    List<String> classConstants,
     Map<String, AnnotationValues> annotations,
     List<MethodRef> lambdaBodies
 ) {

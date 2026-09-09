@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -103,6 +104,8 @@ public final class ClassFactsReader {
         private final List<String> stringConstants = new ArrayList<>();
         private final Set<String> writtenOwnFields = new LinkedHashSet<>();
         private final Set<String> referencedFieldOwners = new LinkedHashSet<>();
+        private final Set<String> referencedFieldTypes = new LinkedHashSet<>();
+        private final List<String> classConstants = new ArrayList<>();
         private final Map<String, AnnotationValues> annotations = new LinkedHashMap<>();
         private final List<MethodRef> lambdaBodies = new ArrayList<>();
 
@@ -138,6 +141,11 @@ public final class ClassFactsReader {
             if (value instanceof String text) {
                 stringConstants.add(text);
             }
+            // 클래스 리터럴(Trip.class)은 LDC 의 Type 상수로 실립니다. em.find(Trip.class, id)
+            // 처럼 엔티티를 클래스 리터럴로만 지목하는 호출에서는 이것이 유일한 단서입니다.
+            if (value instanceof Type type) {
+                objectTypeOf(type).ifPresent(classConstants::add);
+            }
         }
 
         @Override
@@ -156,6 +164,11 @@ public final class ClassFactsReader {
             // 872개 중 EntityPathBase 상속은 23개뿐이었고 전부 Q클래스였습니다).
             if (opcode == Opcodes.GETSTATIC || opcode == Opcodes.GETFIELD) {
                 referencedFieldOwners.add(owner);
+                // owner 는 필드를 "선언한" 타입이므로 Q클래스를 자기 인스턴스 필드로 들고
+                // 쓰는 코드(private final QTrip held = QTrip.trip; → this.held)에서는
+                // Q클래스가 owner 로 나타나지 않습니다 — 그 코드의 owner 는 리포지토리
+                // 자신입니다. 필드에 담긴 값의 타입은 디스크립터에만 있으므로 따로 모읍니다.
+                objectTypeOf(Type.getType(descriptor)).ifPresent(referencedFieldTypes::add);
             }
         }
 
@@ -180,7 +193,24 @@ public final class ClassFactsReader {
             sink.accept(new MethodFacts(ref, access, List.copyOf(calls), List.copyOf(newTypes),
                 List.copyOf(stringConstants), Collections.unmodifiableSet(new LinkedHashSet<>(writtenOwnFields)),
                 Collections.unmodifiableSet(new LinkedHashSet<>(referencedFieldOwners)),
+                Collections.unmodifiableSet(new LinkedHashSet<>(referencedFieldTypes)),
+                List.copyOf(classConstants),
                 Collections.unmodifiableMap(new LinkedHashMap<>(annotations)), List.copyOf(lambdaBodies)));
+        }
+
+        /**
+         * 참조 타입이면 그 internal name 입니다. 기본 타입({@code int} 등)과
+         * {@code void} 는 빈 값이고, 배열은 원소 타입을 따라 내려갑니다 —
+         * {@code Trip[]} 필드도 {@code Trip} 을 단서로 씁니다.
+         */
+        private static Optional<String> objectTypeOf(Type type) {
+            Type current = type;
+            while (current.getSort() == Type.ARRAY) {
+                current = current.getElementType();
+            }
+            return current.getSort() == Type.OBJECT
+                ? Optional.of(current.getInternalName())
+                : Optional.empty();
         }
     }
 
