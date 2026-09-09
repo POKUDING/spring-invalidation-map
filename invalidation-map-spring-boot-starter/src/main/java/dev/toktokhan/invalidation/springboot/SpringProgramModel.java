@@ -220,6 +220,21 @@ public final class SpringProgramModel implements ProgramModel {
      * <p>{@code Repositories} 의 도메인 타입 순회와 {@code RepositoryInformation.getFragments()}
      * 는 둘 다 순서를 보장하지 않는 컬렉션(해시 기반 순회, {@code Set})을 돌려줍니다. 색인
      * 구축이 JVM 재시작에 걸쳐 같은 결과를 내도록 이름으로 정렬해 순회합니다.
+     *
+     * <p><b>{@code getFragments()} 가 "프래그먼트 인터페이스 이름 + Impl" 관용구를 통째로
+     * 놓치는 경우가 있습니다(Task 11 실측).</b> {@code NoteJpaRepository}/{@code
+     * NoteRepositoryCustom}/{@code NoteRepositoryCustomImpl} 로 재현됩니다 —
+     * spring-data-commons 3.3.5(Spring Boot 3.3.5)에서 {@code info.getFragments()} 가 이
+     * 리포지토리에 대해 빈 리스트를 돌려줍니다. 같은 애플리케이션의 "리포지토리 인터페이스
+     * 이름 + Impl" 레거시 관용구({@code SlotInstanceRepositoryImpl}, {@code
+     * DeepRepositoryImpl})는 3.3.5 에서도 {@code getFragments()} 로 정상 조회됩니다.
+     * spring-data-commons 4.0.6(Spring Boot 4.0.6)에서는 두 관용구 모두 정상입니다. 클래스패스
+     * 이름 규칙으로 프래그먼트 구현체를 찾는 처리 자체가 두 세대 사이에서 달라진 것으로
+     * 보이나, spring-data-commons 내부 구현이라 이 라이브러리가 원인을 고칠 수는 없습니다.
+     * 대신 {@code repositoryTypes}(리포지토리 인터페이스, 상위 인터페이스 전이 훑기로 찾은
+     * 후보, {@code getFragments()} 가 돌려준 계약 인터페이스를 모두 담습니다) 각각으로
+     * 빈 팩토리를 직접 스캔해 이 경우를 보강합니다. {@code getFragments()} 가 이미 찾은
+     * 구현체를 다시 찾아도 {@code byFragment} 값이 {@code Set} 이라 중복은 그냥 무시됩니다.
      */
     private void buildRepositoryIndex() {
         Map<String, String> byRepository = new LinkedHashMap<>();
@@ -250,10 +265,14 @@ public final class SpringProgramModel implements ProgramModel {
             // 정확히 같은 집합이며, 아래에서 이 리포지토리의 프래그먼트 구현체를 이 집합
             // 전부의 키로 등록하는 데 그대로 씁니다(클래스 javadoc 참고).
             Set<String> repositoryNames = new LinkedHashSet<>();
+            // repositoryNames 와 같은 후보를 Class 로도 들고 있습니다. getFragments() 가
+            // 놓치는 프래그먼트를 빈 팩토리 직접 스캔으로 보강할 때 씁니다(아래 참고).
+            Set<Class<?>> repositoryTypes = new LinkedHashSet<>();
 
             String repositoryInterfaceName = MethodRefs.internalNameOf(repositoryInterface);
             registerEntityMapping(byRepository, conflicting, repositoryInterfaceName, entity);
             repositoryNames.add(repositoryInterfaceName);
+            repositoryTypes.add(repositoryInterface);
 
             // 리포지토리 인터페이스 이름 규칙(레거시: `XxxRepository extends ..., XxxCustom` 에
             // `XxxRepositoryImpl` 을 붙이는 방식, pirl-spring 의 SlotInstanceRepository 가 이
@@ -294,6 +313,7 @@ public final class SpringProgramModel implements ProgramModel {
                     String candidateName = MethodRefs.internalNameOf(candidate);
                     registerEntityMapping(byRepository, conflicting, candidateName, entity);
                     repositoryNames.add(candidateName);
+                    repositoryTypes.add(candidate);
                 }
                 pendingInterfaces.addAll(List.of(candidate.getInterfaces()));
             }
@@ -311,6 +331,7 @@ public final class SpringProgramModel implements ProgramModel {
                 String contributorName = MethodRefs.internalNameOf(fragment.getSignatureContributor());
                 registerEntityMapping(byRepository, conflicting, contributorName, entity);
                 repositoryNames.add(contributorName);
+                repositoryTypes.add(fragment.getSignatureContributor());
             }
 
             for (RepositoryFragment<?> fragment : fragments) {
@@ -324,6 +345,41 @@ public final class SpringProgramModel implements ProgramModel {
                             .add(implementationName);
                     }
                 });
+            }
+
+            // info.getFragments() 가 "프래그먼트 인터페이스 이름 + Impl" 관용구(NoteRepositoryCustom
+            // → NoteRepositoryCustomImpl)의 구현체를 통째로 놓치는 경우를 Task 11 에서 실측으로
+            // 확인했습니다 — spring-data-commons 3.3.5(Boot 3.3.5) 에서 NoteJpaRepository 의
+            // getFragments() 가 빈 리스트를 돌려줍니다. 같은 애플리케이션에서 "리포지토리
+            // 인터페이스 이름 + Impl" 레거시 관용구(SlotInstanceRepositoryImpl, DeepRepositoryImpl)
+            // 는 3.3.5 에서도 정상적으로 잡힙니다. spring-data-commons 4.0.6(Boot 4.0.6) 에서는
+            // 두 관용구 모두 getFragments() 로 정상적으로 잡힙니다. 원인은 spring-data-commons
+            // 내부(리포지토리 팩토리가 인터페이스 이름 규칙 프래그먼트를 재조회 시점에 다시
+            // 구성하는 방식의 세대차)로 보이나, 이 라이브러리가 spring-data-commons 내부 구현을
+            // 고칠 수는 없습니다. 위에서 이미 확보한 repositoryTypes(리포지토리 인터페이스,
+            // 상위 인터페이스 전이 훑기로 찾은 후보, getFragments() 가 돌려준 계약 인터페이스)
+            // 각각에 대해 빈 팩토리를 직접 스캔해 이 경우를 보강합니다. getFragments() 가 이미
+            // 찾은 구현체를 다시 찾아도 byFragment 값이 Set 이라 중복은 그냥 무시됩니다 —
+            // 4.0.6 에서는 이 보강 루프가 아무 새 결과도 추가하지 않습니다(실측: 이 보강을
+            // 넣기 전에도 4.0.6 은 183+29 테스트 전부 통과).
+            for (Class<?> fragmentType : repositoryTypes) {
+                for (String beanName : beanFactory.getBeanDefinitionNames()) {
+                    Class<?> beanType = typeOf(beanName);
+                    if (beanType == null) {
+                        continue;
+                    }
+                    Class<?> userType = ClassUtils.getUserClass(beanType);
+                    // 인터페이스는 구현체가 아닙니다(리포지토리 프록시 빈 자신을 포함해
+                    // repositoryTypes 의 인터페이스 항목이 스스로와 매칭되는 것을 막습니다).
+                    if (userType.isInterface() || !fragmentType.isAssignableFrom(userType)) {
+                        continue;
+                    }
+                    String implementationName = MethodRefs.internalNameOf(userType);
+                    for (String name : repositoryNames) {
+                        byFragment.computeIfAbsent(name, key -> new LinkedHashSet<>())
+                            .add(implementationName);
+                    }
+                }
             }
         }
         this.repositoryEntities = Collections.unmodifiableMap(new LinkedHashMap<>(byRepository));
