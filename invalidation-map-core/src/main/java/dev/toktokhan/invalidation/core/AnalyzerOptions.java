@@ -9,8 +9,4 @@ import java.util.List;
  */
 public record AnalyzerOptions(List<String> basePackages, int nodeBudget,
     boolean expandReadAssociations) {
-
-    public static AnalyzerOptions defaults(List<String> basePackages) {
-        return new AnalyzerOptions(List.copyOf(basePackages), 20_000, true);
-    }
 }
