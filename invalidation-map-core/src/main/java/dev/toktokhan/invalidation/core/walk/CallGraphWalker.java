@@ -132,7 +132,8 @@ public final class CallGraphWalker {
      * 이 호출로 내려갈 대상입니다.
      *
      * <p>호출 대상 자신은 조건 없이 넣습니다 — 이 자리가 진짜로 읽을 수 없으면 그 자체가
-     * 미해결 사유입니다. 구현체 후보는 실제로 그 메서드를 갖고 있는 것만 넣습니다.
+     * 미해결 사유입니다. 구현체 후보는 실제로 그 메서드를 갖고 있는 것만 넣되, 이 판정에는
+     * 후보 클래스의 가독성을 먼저 구분해야 합니다(아래 참고).
      *
      * <p>{@code implementationsOf} 가 인터페이스 하나에 서로 다른 프래그먼트 구현체 여러
      * 개를 돌려줄 수 있고, 그중 일부는 지금 호출하는 메서드를 갖고 있지 않을 수 있습니다
@@ -141,9 +142,20 @@ public final class CallGraphWalker {
      * 후보를 조건 없이 넣으면 {@code resolveMethod} 가 실패해 "본문을 읽을 수 없습니다" 가
      * 붙는데, 이는 실제로 아무것도 잘못되지 않은 상태를 미해결로 오분류하는 것입니다(실측:
      * 스타터의 {@code SpringProgramModel} 이 리포지토리 인터페이스로 프래그먼트 구현체를
-     * 색인할 때 이 모양으로 재현됨). 후보를 미리 걸러 이 오분류를 막습니다 — 걸러진 후보는
-     * 그냥 이 호출과 무관한 것이므로 조용히 넘어가도 4.4 원칙(누락 금지)을 어기지 않습니다.
-     * 호출 대상 자신(위에서 무조건 추가)이 여전히 진짜 미해결을 보고합니다.
+     * 색인할 때 이 모양으로 재현됨).
+     *
+     * <p>{@code classes.resolveMethod(candidate)} 가 실패하는 이유는 둘로 갈립니다.
+     * (1) 후보 클래스는 읽히는데 그 메서드가 없음 — 이 호출과 무관한 후보이므로 조용히
+     * 걸러도 4.4 원칙(누락 금지)을 어기지 않습니다. (2) 후보 클래스 자체를 읽을 수 없음
+     * (클래스 바이트를 못 구함, 예외가 아니라 리소스 없음 — 예: {@code
+     * SpringProgramModel.classBytes} 가 생성 시점에 고정한 클래스로더가 핫리로드·멀티
+     * 클래스로더 환경에서 실제 구현체를 로드한 클래스로더와 달라지는 경우) — 이 경우는
+     * 후보가 무관한지 아닌지 판단할 수 없으므로 걸러내면 안 됩니다. 호출 대상 자신(위에서
+     * 무조건 추가)은 인터페이스의 추상 선언이라 문제없이 resolve 되어 이 상황에서 아무
+     * 것도 보고하지 않으므로, "호출 대상 자신이 진짜 미해결을 보고한다"는 방어에 기댈 수
+     * 없습니다 — 이 후보를 스스로 {@code targets} 에 넣어 {@code walk()} 의 프레임 단위
+     * 검사가 미해결로 잡게 해야 합니다(실측: 라운드 1 수정이 이 구분 없이 두 경우 모두
+     * 걸러 조용한 누락을 재도입했음을 재검토로 확인).
      */
     private Set<MethodRef> descendTargets(MethodRef callee) {
         if (!inBasePackages(callee.owner())) {
@@ -153,7 +165,9 @@ public final class CallGraphWalker {
         targets.add(callee);
         for (String implementation : program.implementationsOf(callee.owner())) {
             MethodRef candidate = new MethodRef(implementation, callee.name(), callee.descriptor());
-            if (classes.resolveMethod(candidate).isPresent()) {
+            // 클래스 자체를 못 읽으면(위 (2)) 걸러내지 않고 그대로 넣습니다. 메서드가
+            // 없어서 실패하는 것(위 (1))만 걸러냅니다.
+            if (classes.facts(implementation).isEmpty() || classes.resolveMethod(candidate).isPresent()) {
                 targets.add(candidate);
             }
         }
