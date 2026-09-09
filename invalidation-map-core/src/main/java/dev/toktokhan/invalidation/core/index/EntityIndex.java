@@ -311,12 +311,15 @@ public final class EntityIndex {
             // @Table 이 없으면 기본 규칙 후보를 전부 등록합니다. 조회 표에 여분의 항목이
             // 있어도 해가 없고, 어느 네이밍 전략을 쓰는 프로젝트든 덮습니다.
             // 1. JPA 표준 기본값(엔티티 단순명 그대로)과 그 소문자
-            // 2. Spring Boot 기본값(SpringPhysicalNamingStrategy 의 snake_case)
-            // 3. 순진한 snake_case(대문자마다 밑줄) — 위 두 규칙이 못 미치는 경우의 안전망
+            // 2. Hibernate 6 계열의 snake_case (Spring Boot 3.x 기본값)
+            // 3. Hibernate 7 계열의 snake_case (Spring Boot 4.x 기본값) — 숫자 경계에서
+            //    2번과 결과가 갈립니다
+            // 4. 순진한 snake_case(대문자마다 밑줄) — 위 규칙들이 못 미치는 경우의 안전망
             String simpleName = MethodRefs.simpleNameOf(entity);
             registerTableName(index, entity, simpleName);
             registerTableName(index, entity, simpleName.toLowerCase(Locale.ROOT));
             registerTableName(index, entity, springPhysicalNamingSnakeCase(simpleName));
+            registerTableName(index, entity, hibernate7SnakeCase(simpleName));
             registerTableName(index, entity, camelToSnake(simpleName));
         }
 
@@ -409,7 +412,43 @@ public final class EntityIndex {
         return builder.toString().toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Hibernate 7 의 물리 네이밍 전략({@code PhysicalNamingStrategySnakeCaseImpl}, Spring
+     * Boot 4.x 기본값)과 같은 규칙입니다. {@link #springPhysicalNamingSnakeCase}(Hibernate
+     * 6 계열, Boot 3.x 기본값)와 앞·뒷 글자 조건이 다릅니다 — 숫자도 소문자처럼 취급해
+     * 숫자와 대문자가 맞닿는 자리에 밑줄을 넣습니다.
+     *
+     * <p>두 세대 jar 의 바이트코드로 직접 대조한 조건입니다.
+     * <pre>
+     * Hibernate 6.5.3  isLowerCase(before) &amp;&amp; isUpperCase(current) &amp;&amp; isLowerCase(after)
+     * Hibernate 7.2.12 (isLowerCase(before) || isDigit(before)) &amp;&amp; isUpperCase(current)
+     *                  &amp;&amp; (isLowerCase(after) || isDigit(after))
+     * </pre>
+     *
+     * <p>실측(두 클래스패스에서 Hibernate 가 실제로 만든 테이블): {@code HTTPCache2Entry}
+     * 는 Boot 3.3.5 에서 {@code httpcache2entry}, Boot 4.0.6 에서 {@code httpcache2_entry}
+     * 입니다. 이 규칙을 후보에 넣지 않으면 Boot 4 쪽 이름이 어떤 후보와도 맞지 않아,
+     * 그 테이블을 건드리는 네이티브 SQL 의 엔티티가 조용히 누락됩니다 — 연속된 대문자와
+     * 숫자 경계를 함께 가진 이름에서만 갈리지만, 방향이 누락이라 후보를 늘립니다.
+     */
+    static String hibernate7SnakeCase(String name) {
+        StringBuilder builder = new StringBuilder(name);
+        for (int i = 1; i < builder.length() - 1; i++) {
+            if (isUnderscoreRequiredWithDigits(
+                builder.charAt(i - 1), builder.charAt(i), builder.charAt(i + 1))) {
+                builder.insert(i++, '_');
+            }
+        }
+        return builder.toString().toLowerCase(Locale.ROOT);
+    }
+
     private static boolean isUnderscoreRequired(char before, char current, char after) {
         return Character.isLowerCase(before) && Character.isUpperCase(current) && Character.isLowerCase(after);
+    }
+
+    private static boolean isUnderscoreRequiredWithDigits(char before, char current, char after) {
+        return (Character.isLowerCase(before) || Character.isDigit(before))
+            && Character.isUpperCase(current)
+            && (Character.isLowerCase(after) || Character.isDigit(after));
     }
 }
