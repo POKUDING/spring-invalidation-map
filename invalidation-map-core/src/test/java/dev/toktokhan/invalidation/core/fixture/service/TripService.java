@@ -10,6 +10,7 @@ public class TripService {
 
     private TripPort port;
     private WideTripPort widePort;
+    private GhostPort ghostPort;
     private ApplicationEventPublisher publisher;
     private TransactionalWorker transactionalWorker;
 
@@ -118,5 +119,15 @@ public class TripService {
      */
     public void closeWidely() {
         widePort.close();
+    }
+
+    /**
+     * {@link GhostPort#vanish()} 를 부릅니다. 테스트 배선에서 {@link GhostPort} 의 유일한
+     * 등록된 구현체는 클래스 바이트를 구할 수 없습니다(실제로 컴파일된 적 없는 이름). 이
+     * 후보가 이 호출과 무관한지 판단할 수 없으므로, 메서드가 없어서 걸러지는 경우
+     * ({@link #closeWidely()})와 달리 조용히 넘어가면 안 되고 미해결로 보고돼야 합니다.
+     */
+    public void vanish() {
+        ghostPort.vanish();
     }
 }

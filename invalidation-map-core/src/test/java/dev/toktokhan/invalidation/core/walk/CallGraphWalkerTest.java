@@ -6,6 +6,7 @@ import dev.toktokhan.invalidation.core.MethodRef;
 import dev.toktokhan.invalidation.core.MethodRefs;
 import dev.toktokhan.invalidation.core.fixture.event.TripEventListeners;
 import dev.toktokhan.invalidation.core.fixture.service.AbstractTransactionalWorker;
+import dev.toktokhan.invalidation.core.fixture.service.GhostPort;
 import dev.toktokhan.invalidation.core.fixture.service.TripPort;
 import dev.toktokhan.invalidation.core.fixture.service.TripPortAdapter;
 import dev.toktokhan.invalidation.core.fixture.service.TripService;
@@ -29,6 +30,9 @@ class CallGraphWalkerTest {
         // 없음). implementationsOf 가 과잉 등록한 후보를 워커가 안전하게 거르는지 확인하는
         // 배선입니다 — walk_implementationMissingCalledMethod_doesNotReportUnresolved 참고.
         .withImplementation(WideTripPort.class, TripPortAdapter.class)
+        // GhostPortAdapter 는 실제로 컴파일된 적 없는 이름입니다 — 클래스 바이트를 구할 수
+        // 없습니다. walk_implementationClassCannotBeRead_reportsUnresolved 참고.
+        .withUnreadableImplementation(GhostPort.class, BASE + "/service/GhostPortAdapter")
         .withEventListener(TripEventListeners.class, "onTripEvent")
         .withEventListener(TripEventListeners.class, "onArchivedByClasses");
     private final ClassRepository classes = new ClassRepository(program);
@@ -164,6 +168,19 @@ class CallGraphWalkerTest {
         // 재현됩니다(스타터의 apiDocs_resolvedTrue_isOmitted 참고).
         WalkResult result = walker.walk(ref("closeWidely"), visitor);
         assertThat(result.unresolved()).isEmpty();
+    }
+
+    @Test
+    void walk_implementationClassCannotBeRead_reportsUnresolved() {
+        // GhostPortAdapter 는 실제로 컴파일된 적 없는 이름입니다 — 클래스 바이트를 구할 수
+        // 없습니다(program.classBytes 가 예외 없이 빈 값을 돌려줌). 이 후보가 이 호출과
+        // 무관한지 판단할 수 없으므로, 메서드가 없어서 걸러지는 경우(바로 위 테스트)와
+        // 달리 조용히 넘어가면 안 됩니다 — resolveMethod 실패의 두 원인(메서드 없음 vs
+        // 클래스 자체를 못 읽음)을 구분하지 못하면 이 접근도 조용히 사라집니다(라운드 2
+        // 재검토가 발견한 회귀, TempGhostCandidateProbe 로 재현됨).
+        WalkResult result = walker.walk(ref("vanish"), visitor);
+        assertThat(result.unresolved()).anySatisfy(
+            reason -> assertThat(reason).contains("GhostPortAdapter"));
     }
 
     @Test

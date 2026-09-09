@@ -58,6 +58,19 @@ public final class FakeProgramModel implements ProgramModel {
         return this;
     }
 
+    /**
+     * 클래스 바이트를 구할 수 없는 구현체를 등록합니다. 실제 {@code Class} 대신 임의의
+     * 내부 이름을 그대로 씁니다 — {@code classBytes} 가 그 이름에 대해 (예외가 아니라)
+     * 빈 값을 돌려주는 상황(클래스로더가 그 리소스를 찾지 못함)을 재현하는 데 씁니다.
+     */
+    public FakeProgramModel withUnreadableImplementation(Class<?> interfaceType,
+        String implementationInternalName) {
+        implementations
+            .computeIfAbsent(MethodRefs.internalNameOf(interfaceType), key -> new LinkedHashSet<>())
+            .add(implementationInternalName);
+        return this;
+    }
+
     public FakeProgramModel withEntity(Class<?> entityType) {
         entities.add(MethodRefs.internalNameOf(entityType));
         return this;
