@@ -228,9 +228,17 @@ public final class SpringProgramModel implements ProgramModel {
      * 리포지토리에 대해 빈 리스트를 돌려줍니다. 같은 애플리케이션의 "리포지토리 인터페이스
      * 이름 + Impl" 레거시 관용구({@code SlotInstanceRepositoryImpl}, {@code
      * DeepRepositoryImpl})는 3.3.5 에서도 {@code getFragments()} 로 정상 조회됩니다.
-     * spring-data-commons 4.0.6(Spring Boot 4.0.6)에서는 두 관용구 모두 정상입니다. 클래스패스
-     * 이름 규칙으로 프래그먼트 구현체를 찾는 처리 자체가 두 세대 사이에서 달라진 것으로
-     * 보이나, spring-data-commons 내부 구현이라 이 라이브러리가 원인을 고칠 수는 없습니다.
+     * spring-data-commons 4.0.6(Spring Boot 4.0.6)에서는 두 관용구 모두 정상입니다.
+     *
+     * <p>원인은 {@code RepositoryFactoryBeanSupport} 의 세대차입니다(두 세대 jar 를 {@code javap}
+     * 로 대조해 확인했습니다). 3.3.5 는 {@code customImplementation} 과 {@code repositoryFragments}
+     * 를 별도 필드로 두고, {@code getRepositoryInformation()} 은 그중 {@code customImplementation}
+     * 만 반영합니다 — 그래서 프래그먼트 인터페이스 이름 규칙으로 찾아 {@code repositoryFragments}
+     * 로 들어온 구현체가 {@code getFragments()} 결과에서 빠집니다(리포지토리 프록시 자체는
+     * 정상 동작합니다. 프록시 생성 경로는 두 필드를 다 보기 때문입니다). 4.0.5 는 이를
+     * {@code cachedFragments} 와 {@code getRepositoryFragments(RepositoryMetadata)} 로 통합해
+     * 두 경로가 같은 값을 보게 고쳤습니다. spring-data-commons 내부 구현이라 이 라이브러리가
+     * 원인을 고칠 수는 없습니다.
      * 대신 {@code repositoryTypes}(리포지토리 인터페이스, 상위 인터페이스 전이 훑기로 찾은
      * 후보, {@code getFragments()} 가 돌려준 계약 인터페이스를 모두 담습니다) 각각으로
      * 빈 팩토리를 직접 스캔해 이 경우를 보강합니다. {@code getFragments()} 가 이미 찾은
@@ -353,10 +361,11 @@ public final class SpringProgramModel implements ProgramModel {
             // getFragments() 가 빈 리스트를 돌려줍니다. 같은 애플리케이션에서 "리포지토리
             // 인터페이스 이름 + Impl" 레거시 관용구(SlotInstanceRepositoryImpl, DeepRepositoryImpl)
             // 는 3.3.5 에서도 정상적으로 잡힙니다. spring-data-commons 4.0.6(Boot 4.0.6) 에서는
-            // 두 관용구 모두 getFragments() 로 정상적으로 잡힙니다. 원인은 spring-data-commons
-            // 내부(리포지토리 팩토리가 인터페이스 이름 규칙 프래그먼트를 재조회 시점에 다시
-            // 구성하는 방식의 세대차)로 보이나, 이 라이브러리가 spring-data-commons 내부 구현을
-            // 고칠 수는 없습니다. 위에서 이미 확보한 repositoryTypes(리포지토리 인터페이스,
+            // 두 관용구 모두 getFragments() 로 정상적으로 잡힙니다. 원인은
+            // RepositoryFactoryBeanSupport 의 세대차입니다 — 3.3.5 의 getRepositoryInformation()
+            // 은 customImplementation 만 반영하고 repositoryFragments 필드를 누락하며, 4.0.5 는
+            // 둘을 cachedFragments 로 통합했습니다(클래스 javadoc 참고). 이 라이브러리가
+            // spring-data-commons 내부 구현을 고칠 수는 없습니다. 위에서 이미 확보한 repositoryTypes(리포지토리 인터페이스,
             // 상위 인터페이스 전이 훑기로 찾은 후보, getFragments() 가 돌려준 계약 인터페이스)
             // 각각에 대해 빈 팩토리를 직접 스캔해 이 경우를 보강합니다. getFragments() 가 이미
             // 찾은 구현체를 다시 찾아도 byFragment 값이 Set 이라 중복은 그냥 무시됩니다 —
