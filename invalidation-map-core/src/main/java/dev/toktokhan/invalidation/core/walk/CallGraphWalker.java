@@ -1,6 +1,7 @@
 package dev.toktokhan.invalidation.core.walk;
 
 import dev.toktokhan.invalidation.core.MethodRef;
+import dev.toktokhan.invalidation.core.MethodRefs;
 import dev.toktokhan.invalidation.core.ProgramModel;
 import dev.toktokhan.invalidation.core.index.ClassRepository;
 import dev.toktokhan.invalidation.core.index.ListenerIndex;
@@ -99,20 +100,13 @@ public final class CallGraphWalker {
             }
 
             if (publishesEvent) {
-                // 이 메서드 안에서 NEW 로 만든 모든 타입을 이벤트 후보로 봅니다.
-                // ApplicationEvent 로 걸러내면 Spring 4.2 이후의 POJO 이벤트를 놓칩니다.
-                //
-                // 한계: NEW 로 만들지 않은 이벤트(필드에서 꺼내 재발행, 파라미터로 받아 그대로
-                // 재발행, 팩터리 메서드가 만들어 돌려준 이벤트)는 newTypes 에 잡히지 않아
-                // 후보에 들어오지 않고, 그래서 리스너로 이어지지 않습니다. 팩터리 경로는
-                // publishEvent 인자의 디스크립터를 함께 보거나 호출된 팩터리 메서드의
-                // newTypes 를 합치는 확장이 필요합니다. 아래에서 candidate 가 하나도 없으면
-                // unresolved 에 남겨 이 한계를 드러냅니다.
-                if (facts.newTypes().isEmpty()) {
-                    unresolved.add("이벤트 타입을 식별하지 못했습니다: " + frame.ref());
-                }
-                for (String candidate : facts.newTypes()) {
-                    for (MethodRef listener : listeners.listenersFor(candidate)) {
+                boolean identified = false;
+                for (String candidate : eventCandidates(facts)) {
+                    Set<MethodRef> matched = listeners.listenersFor(candidate);
+                    if (!matched.isEmpty()) {
+                        identified = true;
+                    }
+                    for (MethodRef listener : matched) {
                         // publishEvent 호출은 리스너를 직접 부르지 않으므로 실제 바이트코드
                         // 호출이 없습니다. 리스너 자신을 호출 지점으로 보고하지 않으면, 리스너
                         // 본문이 비어 있는 경우(예: 로깅만 하는 리스너) 이 전이 자체가 방문자에게
@@ -121,6 +115,9 @@ public final class CallGraphWalker {
                         pending.push(new Frame(listener,
                             state.inTransaction(), state.readOnlyTransaction()));
                     }
+                }
+                if (!identified) {
+                    unresolved.add("이벤트 타입을 식별하지 못했습니다: " + frame.ref());
                 }
             }
         }
@@ -242,6 +239,34 @@ public final class CallGraphWalker {
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * 이 메서드가 발행하는 이벤트의 타입 후보입니다.
+     *
+     * <p>{@code publishEvent} 의 인자는 스택에 있고 이 분석은 스택을 추적하지 않으므로,
+     * 그 메서드 안에서 이벤트 객체가 나올 수 있는 자리를 전부 후보로 봅니다 —
+     * {@code NEW} 로 만든 타입, 호출한 메서드의 <b>반환 타입</b>(팩터리에서 받은 이벤트),
+     * 이 메서드 자신의 파라미터 타입(받아서 그대로 재발행), 읽은 필드의 타입(필드에 들고
+     * 있던 이벤트)입니다. 이벤트가 아닌 타입이 섞여도 {@code listenersFor} 가 리스너를
+     * 돌려주지 않아 결과에 영향이 없습니다.
+     *
+     * <p>{@code ApplicationEvent} 하위로 좁히지 않습니다 — Spring 4.2 부터 임의의 객체가
+     * 이벤트가 될 수 있어 좁히면 POJO 이벤트를 놓칩니다.
+     *
+     * <p>이전 구현은 {@code NEW} 로 만든 타입만 후보로 봤습니다. 그러면 팩터리·필드·
+     * 파라미터에서 얻은 이벤트를 발행하는 메서드가 리스너로 이어지지 않는데, 미해결 조건이
+     * "{@code NEW} 가 아예 없음" 이어서 같은 메서드가 다른 객체를 하나라도 {@code new}
+     * 하면 표시조차 붙지 않았습니다 — 리스너 사슬이 조용히 빠지는 누락입니다.
+     */
+    private Set<String> eventCandidates(MethodFacts facts) {
+        Set<String> candidates = new LinkedHashSet<>(facts.newTypes());
+        for (MethodRef call : facts.calls()) {
+            MethodRefs.returnTypeOf(call.descriptor()).ifPresent(candidates::add);
+        }
+        candidates.addAll(MethodRefs.parameterTypesOf(facts.ref().descriptor()));
+        candidates.addAll(facts.referencedFieldTypes());
+        return candidates;
     }
 
     /**
