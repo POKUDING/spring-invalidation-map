@@ -13,7 +13,8 @@ import java.util.Set;
  *
  * <p>엔티티는 호출 지점의 owner 나 인자 타입이 아니라, 호출을 담은 메서드가 참조한
  * Q클래스에서 얻습니다. {@code MethodFacts.newTypes()} 와 {@code calls()} 의 owner,
- * {@code referencedFieldOwners()} 에 나타난 타입 중 {@code EntityPathBase<T>} 를 상속한
+ * {@code referencedFieldOwners()}, {@code referencedFieldTypes()} 에 나타난 타입 중
+ * {@code EntityPathBase<T>} 를 상속한
  * 것을 찾아 {@code T} 를 엔티티로 씁니다. {@code ConstructorExpression<T>} 를 상속한 DTO
  * 프로젝션 Q클래스는 상위 타입이 다르므로 자동으로 걸러집니다.
  *
@@ -32,6 +33,17 @@ import java.util.Set;
  * 바로 정적 인스턴스 참조이므로 실제 프로젝트에서는 이쪽이 오히려 흔합니다. {@code
  * GETSTATIC}/{@code GETFIELD} 로 읽은 필드의 선언 타입({@code referencedFieldOwners()})도
  * 함께 봐야 이 관용구를 놓치지 않습니다.
+ *
+ * <p><b>{@code referencedFieldTypes()} 까지 필요한 이유:</b> {@code visitFieldInsn} 의
+ * {@code owner} 는 필드를 <b>선언한</b> 타입입니다. {@code QTrip.trip} 은 {@code QTrip}
+ * 자신이 그 정적 필드를 선언하므로 {@code referencedFieldOwners()} 로 잡히지만,
+ * {@code private final QTrip held = QTrip.trip;} 처럼 리포지토리가 Q클래스를 자기
+ * 인스턴스 필드로 들고 {@code this.held} 로 쓰면 {@code owner} 는 그 리포지토리
+ * 클래스입니다 — Q클래스를 읽는 {@code GETSTATIC} 은 생성자에만 있고 쿼리 메서드에는
+ * 없습니다. 이 경우 Q클래스는 그 필드의 <b>타입</b>에만 남으므로, 필드 타입까지 봐야
+ * 엔티티를 놓치지 않습니다. 여기서도 걸러내는 책임은 이 리졸버에 있습니다 —
+ * {@code typeArgumentOfSupertype(type, EntityPathBase)} 로 Q클래스만 남기므로 무관한
+ * 필드 타입이 섞여도 엔티티 오보로 이어지지 않습니다.
  *
  * <p><b>다만 어느 호출 지점에 반응할지는 {@code callee} 로 게이트를 겁니다.</b> owner 가
  * {@code com/querydsl/} 패키지이거나(QueryDSL API 표면 — {@code JPAQueryFactory},
@@ -61,6 +73,7 @@ public final class QuerydslResolver implements EntityResolver {
         Set<String> referencedTypes = new LinkedHashSet<>(context.state().caller().newTypes());
         context.state().caller().calls().forEach(call -> referencedTypes.add(call.owner()));
         referencedTypes.addAll(context.state().caller().referencedFieldOwners());
+        referencedTypes.addAll(context.state().caller().referencedFieldTypes());
 
         Set<String> found = new LinkedHashSet<>();
         for (String type : referencedTypes) {
