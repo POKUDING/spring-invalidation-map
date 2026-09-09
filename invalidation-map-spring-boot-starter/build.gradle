@@ -1,3 +1,5 @@
+description = 'Spring 런타임 메타데이터로 분석을 채우고 결과를 OpenAPI 스펙의 x-entities 확장으로 노출하는 Spring Boot 스타터입니다.'
+
 dependencies {
     // 소비자가 @ReadsEntities 등을 쓰므로 api 로 노출합니다.
     api project(':invalidation-map-core')

@@ -1,3 +1,5 @@
+description = '엔드포인트별 JPA 엔티티 읽기·쓰기를 바이트코드에서 계산하는 분석 엔진입니다. Spring 에 의존하지 않습니다.'
+
 dependencies {
     // 전역 제약: main 소스셋은 ASM 외의 의존성을 갖지 않습니다.
     // ASM 타입이 공개 API 시그니처에 나타나지 않으므로 implementation 으로 둡니다.
