@@ -2,6 +2,7 @@ package dev.toktokhan.invalidation.core.fixture.repo;
 
 import com.querydsl.core.types.ConstructorExpression;
 import com.querydsl.core.types.dsl.EntityPathBase;
+import com.querydsl.core.types.dsl.Expressions;
 import dev.toktokhan.invalidation.core.fixture.entity.Trip;
 import dev.toktokhan.invalidation.core.resolve.QuerydslResolver;
 
@@ -40,9 +41,29 @@ public class QuerydslRepository {
         }
     }
 
+    /**
+     * Q클래스를 자기 인스턴스 필드로 들고 있는 관용구입니다. 필드 초기화의
+     * {@code GETSTATIC QTrip.trip} 은 생성자에만 있으므로 쿼리 메서드의 사실에는 남지
+     * 않습니다.
+     */
+    private final QTrip held = QTrip.trip;
+
     public Object selectFrom() {
         QTrip trip = new QTrip();
         return trip.toString();
+    }
+
+    /**
+     * 인스턴스 필드에 들고 있는 Q클래스를 QueryDSL API 에 그대로 넘기는 관용구입니다.
+     * 이 메서드의 사실에서 Q클래스는 {@code GETFIELD held} 의 <b>필드 타입</b>으로만
+     * 나타납니다 — {@code NEW} 명령이 없고, 호출 지점의 owner 는
+     * {@code com/querydsl/core/types/dsl/Expressions} 이며, {@code GETFIELD} 의 owner 는
+     * 필드를 <b>선언한</b> 타입인 {@code QuerydslRepository} 자신입니다. 따라서
+     * {@code referencedFieldOwners()}(선언 타입)만 보는 구현은 이 관용구에서 엔티티를
+     * 찾지 못합니다.
+     */
+    public Object selectFromInstanceField() {
+        return Expressions.asSimple(held);
     }
 
     /**

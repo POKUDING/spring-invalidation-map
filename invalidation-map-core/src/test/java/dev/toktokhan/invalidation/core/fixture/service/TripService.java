@@ -13,6 +13,7 @@ public class TripService {
     private GhostPort ghostPort;
     private AncestorPort ancestorPort;
     private ApplicationEventPublisher publisher;
+    private TripArchivedEvent heldEvent;
     private TransactionalWorker transactionalWorker;
 
     @Transactional
@@ -75,6 +76,57 @@ public class TripService {
      * 없으므로(이벤트는 호출한 쪽에서 만들었습니다) 이벤트 타입을 식별하지 못합니다.
      */
     public void republishEvent(Object event) {
+        publisher.publishEvent(event);
+    }
+
+    /**
+     * 이벤트를 팩터리에서 받아 발행하면서, 같은 메서드가 이벤트와 무관한 객체도
+     * {@code NEW} 합니다.
+     *
+     * <p>이벤트 후보를 {@code newTypes()} 로만 잡으면 후보는 {@code StringBuilder} 뿐이고
+     * 리스너로 이어지지 않습니다. 그런데 {@code newTypes()} 가 비어 있지 않으므로
+     * "{@code NEW} 가 아예 없음" 가드도 걸리지 않아 미해결 표시조차 붙지 않습니다 —
+     * 조용한 누락입니다. 팩터리 호출의 반환 타입까지 후보로 봐야 이어집니다.
+     */
+    @Transactional
+    public void publishFromFactory() {
+        StringBuilder noise = new StringBuilder();
+        noise.append("noise");
+        publisher.publishEvent(TripCompletedEvent.of(this));
+    }
+
+    /**
+     * 필드에 들고 있는 이벤트를 발행하면서 무관한 객체도 {@code NEW} 합니다. 이벤트는
+     * 읽은 필드의 선언 타입으로만 드러납니다.
+     */
+    @Transactional
+    public void publishHeldEvent() {
+        StringBuilder noise = new StringBuilder();
+        noise.append("noise");
+        publisher.publishEvent(heldEvent);
+    }
+
+    /**
+     * 파라미터로 받은 이벤트를 재발행하면서 무관한 객체도 {@code NEW} 합니다.
+     * {@link #republishEvent(Object)} 와 달리 파라미터 타입이 실제 이벤트 타입입니다.
+     */
+    @Transactional
+    public void republishTypedEvent(TripCompletedEvent event) {
+        StringBuilder noise = new StringBuilder();
+        noise.append("noise");
+        publisher.publishEvent(event);
+    }
+
+    /**
+     * 이벤트를 어디서 얻었는지 알 수 없는데({@code Object} 파라미터) 같은 메서드가 무관한
+     * 객체를 {@code NEW} 합니다. {@code newTypes()} 가 비지 않으므로 "{@code NEW} 가 아예
+     * 없음" 가드는 이 경우를 놓칩니다. 어떤 후보도 리스너로 이어지지 않으므로 미해결로
+     * 드러나야 합니다.
+     */
+    @Transactional
+    public void republishUnknownWithUnrelatedNew(Object event) {
+        StringBuilder noise = new StringBuilder();
+        noise.append("noise");
         publisher.publishEvent(event);
     }
 

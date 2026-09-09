@@ -238,6 +238,50 @@ class CallGraphWalkerTest {
         assertThat(stateAt.get(touch).inTransaction()).isTrue();
     }
 
+    @Test
+    void walk_publishFactoryCreatedEvent_reachesListener() {
+        // publishFromFactory 는 이벤트를 정적 팩터리에서 받아 발행하면서, 같은 메서드가
+        // 이벤트와 무관한 StringBuilder 도 NEW 합니다. 이벤트 후보를 newTypes() 로만 잡으면
+        // 후보는 StringBuilder 뿐이라 리스너로 이어지지 않습니다. 팩터리 호출 디스크립터의
+        // 반환 타입까지 후보로 봐야 닿습니다.
+        walker.walk(ref("publishFromFactory"), visitor);
+        assertThat(seen).contains(program.ref(TripEventListeners.class, "onTripEvent"));
+    }
+
+    @Test
+    void walk_publishFieldHeldEvent_reachesListener() {
+        // 이벤트는 GETFIELD 로 읽은 필드의 선언 타입에만 나타납니다.
+        walker.walk(ref("publishHeldEvent"), visitor);
+        assertThat(seen).contains(program.ref(TripEventListeners.class, "onArchivedByClasses"));
+    }
+
+    @Test
+    void walk_publishParameterTypedEvent_reachesListener() {
+        // 이벤트는 발행 메서드 자신의 파라미터 타입에만 나타납니다.
+        walker.walk(ref("republishTypedEvent"), visitor);
+        assertThat(seen).contains(program.ref(TripEventListeners.class, "onTripEvent"));
+    }
+
+    @Test
+    void walk_publishUnknownEventWithUnrelatedNew_reportsUnresolved() {
+        // republishUnknownWithUnrelatedNew 는 Object 파라미터로 받은 이벤트를 발행하면서
+        // 무관한 객체를 NEW 합니다. newTypes() 가 비지 않으므로 "NEW 가 아예 없음" 가드는
+        // 이 경우를 놓쳐, 후보는 엉뚱한 타입뿐인데 미해결 표시도 붙지 않습니다 —
+        // 리스너 사슬이 조용히 빠집니다.
+        WalkResult result = walker.walk(ref("republishUnknownWithUnrelatedNew"), visitor);
+        assertThat(result.unresolved()).anySatisfy(reason ->
+            assertThat(reason).contains("republishUnknownWithUnrelatedNew"));
+    }
+
+    @Test
+    void walk_publishIdentifiedEvent_doesNotReportUnresolved() {
+        // 대조군입니다. 이벤트 타입을 식별한 발행은 미해결 사유를 만들면 안 됩니다 —
+        // 모든 publishEvent 에 무조건 사유를 붙이는 구현은 여기서 걸립니다.
+        WalkResult result = walker.walk(ref("publish"), visitor);
+        assertThat(result.unresolved()).noneSatisfy(reason ->
+            assertThat(reason).contains("이벤트 타입을 식별하지 못했습니다"));
+    }
+
     private MethodRef ref(String methodName) {
         return program.ref(TripService.class, methodName);
     }

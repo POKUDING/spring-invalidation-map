@@ -91,6 +91,21 @@ class QuerydslResolverTest {
             new MethodRef(TRIP, "rename", "(Ljava/lang/String;)V"))).isEmpty();
     }
 
+    /**
+     * Q클래스를 리포지토리 자신의 인스턴스 필드로 들고 쓰는 관용구입니다
+     * ({@code private final QTrip held = QTrip.trip;} → {@code Expressions.asSimple(held)}).
+     *
+     * <p>{@code visitFieldInsn} 의 {@code owner} 는 필드를 <b>선언한</b> 타입이므로
+     * {@code referencedFieldOwners()} 에는 {@code QuerydslRepository} 만 들어옵니다.
+     * Q클래스는 그 필드의 <b>타입</b>에만 나타나므로, 선언 타입만 보는 구현은 이 관용구에서
+     * 엔티티를 통째로 놓칩니다(조용한 누락).
+     */
+    @Test
+    void resolve_callerReferencesEntityQClassViaInstanceFieldType_reportsEntity() {
+        assertThat(resolveIn("selectFromInstanceField", QUERYDSL_API_CALL))
+            .contains(new EntityAccess(Set.of(TRIP), AccessKind.READ));
+    }
+
     @Test
     void resolve_deleteEntryPoint_isWrite() {
         assertThat(resolveIn("selectFrom",
