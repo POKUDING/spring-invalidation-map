@@ -32,7 +32,7 @@ paths:
 
 ```groovy
 dependencies {
-    implementation 'io.github.pokuding:invalidation-map-spring-boot-starter:0.1.0'
+    implementation 'io.github.pokuding:invalidation-map-spring-boot-starter:0.2.0'
 }
 ```
 
