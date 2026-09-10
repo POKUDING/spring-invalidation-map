@@ -1,0 +1,4 @@
+rootProject.name = 'spring-invalidation-map'
+
+include 'invalidation-map-core'
+include 'invalidation-map-spring-boot-starter'
