@@ -44,7 +44,8 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 public final class SpringProgramModel implements ProgramModel {
 
     private final ConfigurableListableBeanFactory beanFactory;
-    private final RequestMappingHandlerMapping handlerMapping;
+    private final List<RequestMappingHandlerMapping> handlerMappings;
+    private final List<String> basePackages;
     private final EntityManagerFactory entityManagerFactory;
     private final ClassLoader classLoader;
 
@@ -56,14 +57,17 @@ public final class SpringProgramModel implements ProgramModel {
     private Map<String, Set<String>> fragmentImplementations = Map.of();
     private Set<String> entities = Set.of();
     private Set<MethodRef> eventListeners = Set.of();
+    private List<Endpoint> excluded = List.of();
 
     public SpringProgramModel(ConfigurableListableBeanFactory beanFactory,
-        RequestMappingHandlerMapping handlerMapping, EntityManagerFactory entityManagerFactory,
-        ClassLoader classLoader) {
+        List<RequestMappingHandlerMapping> handlerMappings,
+        EntityManagerFactory entityManagerFactory, ClassLoader classLoader,
+        List<String> basePackages) {
         this.beanFactory = beanFactory;
-        this.handlerMapping = handlerMapping;
+        this.handlerMappings = List.copyOf(handlerMappings);
         this.entityManagerFactory = entityManagerFactory;
         this.classLoader = classLoader;
+        this.basePackages = List.copyOf(basePackages);
     }
 
     @Override
@@ -151,23 +155,75 @@ public final class SpringProgramModel implements ProgramModel {
     }
 
     /**
-     * {@code getHandlerMethods()} 가 돌려주는 맵의 순회 순서는 보장되지 않습니다. 그대로 담으면
-     * 엔드포인트 목록 순서가 JVM 을 다시 띄울 때마다 달라지고, 그 순서에 얹히는 진단 출력과
-     * 미해결 목록 순서도 함께 흔들립니다. HTTP 메서드·경로·핸들러 순으로 정렬해 고정합니다.
+     * 후보 핸들러 매핑을 **전부 합쳐서** 엔드포인트를 모읍니다.
+     *
+     * <p>하나를 고르지 않는 이유가 있습니다. 처음에는 {@code orderedStream().findFirst()} 로
+     * order 가 가장 낮은 매핑 하나만 썼는데, 액추에이터를 함께 쓰는 앱에서 엔드포인트가 0개가
+     * 되는 문제가 보고됐습니다. {@code ControllerEndpointHandlerMapping} 이
+     * {@code RequestMappingHandlerMapping} 을 상속하면서 생성자에서 {@code setOrder(-100)} 을
+     * 호출하기 때문입니다(spring-boot-actuator 3.3.5 바이트코드에서 확인). 그 매핑은
+     * {@code @ControllerEndpoint} 빈만 담당하므로 그런 빈이 없는 앱에서는
+     * {@code getHandlerMethods()} 가 비어 있고, 결과적으로 분석 대상이 사라집니다.
+     *
+     * <p>order 로 고르는 방식은 이런 매핑이 하나 더 생길 때마다 다시 깨집니다. 그래서 고르는
+     * 일 자체를 없애고 전부 합칩니다. 같은 핸들러가 두 매핑에 걸려도
+     * {@link dev.toktokhan.invalidation.core.InvalidationMap} 이 핸들러로만 키를 잡으므로
+     * 중복은 문제가 되지 않습니다.
+     *
+     * <p>합친 뒤 {@code basePackages} 로 걸러냅니다. 걸러내지 않으면 springdoc 의
+     * {@code OpenApiWebMvcResource} 나 Spring 의 {@code BasicErrorController} 처럼 우리 코드가
+     * 아닌 엔드포인트까지 분석 대상이 되고, 그 본문은 base package 밖이라 워커가 내려갈 수
+     * 없어 영원히 미해결로 보고됩니다. 남의 코드라 {@code @InvalidationMapIgnore} 를 붙일
+     * 수도 없습니다. 걸러낸 엔드포인트는 {@link #excludedEndpoints()} 로 남겨 로그에
+     * 드러냅니다 — {@code base-packages} 를 잘못 좁히면 실제 엔드포인트가 조용히 빠질 수
+     * 있으므로, 무엇이 빠졌는지 보이지 않으면 안 됩니다.
+     *
+     * <p>{@code getHandlerMethods()} 가 돌려주는 맵의 순회 순서는 보장되지 않습니다. 그대로
+     * 담으면 엔드포인트 목록 순서가 JVM 을 다시 띄울 때마다 달라지고, 그 순서에 얹히는 진단
+     * 출력과 미해결 목록 순서도 함께 흔들립니다. HTTP 메서드·경로·핸들러 순으로 정렬해
+     * 고정합니다.
      */
     private List<Endpoint> buildEndpoints() {
         List<Endpoint> found = new ArrayList<>();
-        handlerMapping.getHandlerMethods().forEach((info, handlerMethod) -> {
-            Class<?> userClass = ClassUtils.getUserClass(handlerMethod.getBeanType());
-            MethodRef handler = MethodRefs.of(userClass, handlerMethod.getMethod());
-            found.add(new Endpoint(httpMethodOf(info), pathOf(info), handler));
-        });
-        found.sort(Comparator.comparing(Endpoint::httpMethod)
+        List<Endpoint> filtered = new ArrayList<>();
+        for (RequestMappingHandlerMapping mapping : handlerMappings) {
+            mapping.getHandlerMethods().forEach((info, handlerMethod) -> {
+                Class<?> userClass = ClassUtils.getUserClass(handlerMethod.getBeanType());
+                MethodRef handler = MethodRefs.of(userClass, handlerMethod.getMethod());
+                Endpoint endpoint = new Endpoint(httpMethodOf(info), pathOf(info), handler);
+                if (inBasePackages(handler.owner())) {
+                    found.add(endpoint);
+                } else {
+                    filtered.add(endpoint);
+                }
+            });
+        }
+        Comparator<Endpoint> order = Comparator.comparing(Endpoint::httpMethod)
             .thenComparing(Endpoint::path)
             .thenComparing(endpoint -> endpoint.handler().owner())
             .thenComparing(endpoint -> endpoint.handler().name())
-            .thenComparing(endpoint -> endpoint.handler().descriptor()));
+            .thenComparing(endpoint -> endpoint.handler().descriptor());
+        found.sort(order);
+        filtered.sort(order);
+        this.excluded = List.copyOf(filtered);
         return List.copyOf(found);
+    }
+
+    /**
+     * {@code basePackages} 밖이라 분석 대상에서 빠진 엔드포인트입니다. 비어 있으면 빠진 것이
+     * 없습니다. {@code basePackages} 가 비어 있으면 아무것도 걸러내지 않습니다.
+     */
+    public List<Endpoint> excludedEndpoints() {
+        initialize();
+        return excluded;
+    }
+
+    private boolean inBasePackages(String internalName) {
+        if (basePackages.isEmpty()) {
+            return true;
+        }
+        return basePackages.stream().anyMatch(prefix ->
+            internalName.equals(prefix) || internalName.startsWith(prefix + "/"));
     }
 
     private static String httpMethodOf(RequestMappingInfo info) {

@@ -1,6 +1,7 @@
 package dev.toktokhan.invalidation.springboot;
 
 import dev.toktokhan.invalidation.core.AnalyzerOptions;
+import dev.toktokhan.invalidation.core.Endpoint;
 import dev.toktokhan.invalidation.core.EndpointEntities;
 import dev.toktokhan.invalidation.core.InvalidationMap;
 import dev.toktokhan.invalidation.core.InvalidationMapAnalyzer;
@@ -133,25 +134,48 @@ public final class InvalidationMapOperationCustomizer implements GlobalOperation
     }
 
     private InvalidationMap analyze() {
-        Optional<RequestMappingHandlerMapping> handlerMapping =
-            handlerMappings.orderedStream().findFirst();
+        // 후보 매핑을 하나도 고르지 않고 전부 넘깁니다. 이유는
+        // SpringProgramModel.buildEndpoints() 의 javadoc 에 있습니다 — order 로 고르면
+        // 액추에이터의 ControllerEndpointHandlerMapping(order -100, 핸들러 0개)이 잡혀
+        // 분석 대상이 사라집니다.
+        List<RequestMappingHandlerMapping> mappings = handlerMappings.orderedStream().toList();
         Optional<EntityManagerFactory> entityManagerFactory =
             entityManagerFactories.orderedStream().findFirst();
-        if (handlerMapping.isEmpty() || entityManagerFactory.isEmpty()) {
+        if (mappings.isEmpty() || entityManagerFactory.isEmpty()) {
             log.info("invalidation-map: RequestMappingHandlerMapping 또는 EntityManagerFactory 가 "
                 + "없어 분석하지 않습니다");
             return InvalidationMap.empty();
         }
 
-        SpringProgramModel program = new SpringProgramModel(beanFactory, handlerMapping.get(),
-            entityManagerFactory.get(), beanFactory.getBeanClassLoader());
-        AnalyzerOptions options = new AnalyzerOptions(basePackages(),
+        List<String> basePackages = basePackages();
+        SpringProgramModel program = new SpringProgramModel(beanFactory, mappings,
+            entityManagerFactory.get(), beanFactory.getBeanClassLoader(), basePackages);
+        AnalyzerOptions options = new AnalyzerOptions(basePackages,
             properties.getNodeBudget(), properties.isExpandReadAssociations());
 
         long startedAt = System.currentTimeMillis();
         InvalidationMap result = new InvalidationMapAnalyzer().analyze(program, options);
         logSummary(result, System.currentTimeMillis() - startedAt);
+        logExcluded(program.excludedEndpoints());
         return result;
+    }
+
+    /**
+     * base package 밖이라 분석에서 빠진 엔드포인트를 남깁니다.
+     *
+     * <p>springdoc 이나 Spring 의 기본 컨트롤러가 여기 걸리는 것은 정상입니다. 그러나
+     * {@code base-packages} 를 잘못 좁히면 실제 엔드포인트도 여기로 빠지고, 그러면 그
+     * 엔드포인트에는 {@code x-entities} 가 붙지 않아 소비자가 무효화를 하지 않습니다.
+     * 조용히 빠지지 않도록 개수와 목록을 남깁니다.
+     */
+    private void logExcluded(List<Endpoint> excluded) {
+        if (excluded.isEmpty()) {
+            return;
+        }
+        log.info("invalidation-map: base package 밖이라 분석에서 제외한 엔드포인트 "
+            + excluded.size() + "개입니다. 우리 코드가 여기 있으면 base-packages 설정을 "
+            + "확인하십시오");
+        excluded.forEach(endpoint -> log.info("  " + endpoint + " -> " + endpoint.handler().owner()));
     }
 
     /** 프로퍼티가 없으면 @SpringBootApplication 의 패키지를 씁니다. */
