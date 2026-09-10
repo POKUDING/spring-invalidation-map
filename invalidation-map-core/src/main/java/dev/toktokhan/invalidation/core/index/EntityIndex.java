@@ -2,12 +2,16 @@ package dev.toktokhan.invalidation.core.index;
 
 import dev.toktokhan.invalidation.core.MethodRef;
 import dev.toktokhan.invalidation.core.MethodRefs;
+import dev.toktokhan.invalidation.core.scan.AnnotationValues;
 import dev.toktokhan.invalidation.core.scan.ClassFacts;
 import dev.toktokhan.invalidation.core.scan.FieldFacts;
 import dev.toktokhan.invalidation.core.scan.MethodFacts;
 import dev.toktokhan.invalidation.core.scan.SignatureTypeArguments;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -16,10 +20,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 
 /**
- * 엔티티에 대해 알아야 하는 사실을 모아 둡니다. 변경자 판정, 한 단계 연관, 필드별 연관 조회,
- * 테이블명 역매핑, JPQL 엔티티명 역색인입니다.
+ * 엔티티에 대해 알아야 하는 사실을 모아 둡니다. 변경자 판정, 연관 전이 닫힘(전체/cascade),
+ * 필드별 연관 조회, 테이블명 역매핑, JPQL 엔티티명 역색인입니다.
  */
 public final class EntityIndex {
 
@@ -35,13 +40,26 @@ public final class EntityIndex {
         "Ljakarta/persistence/Embedded;",
         "Ljakarta/persistence/ElementCollection;");
 
+    /**
+     * 부모를 저장할 때 자식 행까지 쓰게 만드는 {@code CascadeType} 이름입니다.
+     *
+     * <p>{@code REFRESH} 와 {@code DETACH} 는 영속성 컨텍스트에서 엔티티를 다시 읽거나
+     * 분리할 뿐 DB 에 쓰지 않으므로 넣지 않습니다.
+     */
+    private static final Set<String> WRITING_CASCADE_TYPES = Set.of(
+        "ALL", "PERSIST", "MERGE", "REMOVE");
+
     private final ClassRepository classes;
     private final Set<String> entities;
 
     /** 선언 클래스 -> 그 클래스에서 호출 가능한 변경자의 "이름+디스크립터" */
     private final Map<String, Set<String>> mutatorsByDeclaringClass = new ConcurrentHashMap<>();
 
-    private final Map<String, Set<String>> associationCache = new ConcurrentHashMap<>();
+    /** 엔티티 -> 모든 연관을 따라 도달하는 엔티티 전부 */
+    private final Map<String, Set<String>> closureCache = new ConcurrentHashMap<>();
+
+    /** 엔티티 -> cascade 가 걸린 연관을 따라 도달하는 엔티티 전부 */
+    private final Map<String, Set<String>> cascadingClosureCache = new ConcurrentHashMap<>();
     private final Map<String, Set<String>> entitiesByTable;
 
     /** JPQL 엔티티명 -> internal name. @Entity(name=) 값과 단순 클래스명을 모두 색인합니다. */
@@ -91,29 +109,146 @@ public final class EntityIndex {
         return false;
     }
 
-    /** 이 엔티티에서 한 단계 연관으로 닿는 엔티티입니다. 엔티티가 아닌 대상은 버립니다. */
+    /**
+     * 이 엔티티에서 연관을 따라 도달할 수 있는 엔티티 전부입니다. {@code reads} 확장에 씁니다.
+     *
+     * <p>한 단계에서 자르지 않고 전이적으로 닫습니다. 한 단계만 보면 응답에 실리는 손자를
+     * 놓치기 때문입니다 — pirl-spring 에서 {@code ClassInfo → ClassInfoLabel → Label} 과
+     * {@code RunningStylePhoto → User → Suspension} 이 그 모양이고, 두 손자 모두 쓰기
+     * 엔드포인트가 있어 실제로 화면에 오래된 값이 남습니다.
+     *
+     * <p>전체 닫힘 비용은 실측했습니다. pirl-spring 의 엔티티 57개에서 연관 간선은 22개뿐이고,
+     * 닫힘 크기는 평균 1.5개 최대 4개(전체의 7%)입니다. 한 단계(평균 1.4개 최대 3개)와 사실상
+     * 같아 정밀도를 잃지 않습니다. 도메인이 훨씬 촘촘한 프로젝트에서 이 값이 커질 수 있으므로
+     * 스타터가 확장 전후 크기를 로그에 남깁니다.
+     *
+     * <p>고정 단계 수를 쓰지 않는 이유가 하나 더 있습니다. 1이든 2이든 어딘가에서 자르면 그
+     * 다음 단계를 놓치고, 같은 결함이 한 단계 더 깊은 곳에서 다시 나타납니다.
+     */
     public Set<String> associationsOf(String entityInternalName) {
         if (!isEntity(entityInternalName)) {
             return Set.of();
         }
-        return associationCache.computeIfAbsent(entityInternalName, name -> {
-            Set<String> targets = new LinkedHashSet<>();
-            List<String> hierarchy = new ArrayList<>();
-            hierarchy.add(name);
-            hierarchy.addAll(classes.supertypesOf(name));
-            for (String current : hierarchy) {
-                classes.facts(current).ifPresent(facts -> {
-                    for (FieldFacts field : facts.fields()) {
-                        if (isAssociation(field)) {
-                            targets.addAll(associationTargets(field));
-                        }
-                    }
-                });
+        return closureCache.computeIfAbsent(entityInternalName,
+            name -> transitiveClosure(name, field -> true));
+    }
+
+    /**
+     * 이 엔티티에서 **cascade 가 걸린** 연관을 따라 도달할 수 있는 엔티티 전부입니다.
+     * {@code writes} 확장에 씁니다.
+     *
+     * <p>설계 문서는 {@code writes} 를 확장하지 않는다고 정했고 그 근거는 "추측으로 넓히면
+     * 무효화 범위가 급격히 넓어진다" 였습니다. cascade 는 그 근거가 걸리지 않습니다 —
+     * {@code CascadeType.PERSIST}/{@code MERGE}/{@code REMOVE}/{@code ALL} 이나
+     * {@code orphanRemoval} 이 붙은 연관은 부모를 저장할 때 DB 가 자식 행을 실제로
+     * INSERT·UPDATE·DELETE 합니다. 추측이 아니라 스키마에 적힌 사실을 보고하는 것입니다.
+     *
+     * <p>cascade 가 없는 연관은 넣지 않습니다. 부모를 저장해도 그 자식은 쓰이지 않으므로
+     * 넣으면 과잉이 됩니다.
+     *
+     * <p>전이적으로 가는 이유는 cascade 가 JPA 규칙상 실제로 전이되기 때문입니다.
+     * {@code A --ALL--> B --ALL--> C} 에서 {@code save(a)} 는 C 까지 씁니다.
+     */
+    public Set<String> cascadingAssociationsOf(String entityInternalName) {
+        if (!isEntity(entityInternalName)) {
+            return Set.of();
+        }
+        return cascadingClosureCache.computeIfAbsent(entityInternalName,
+            name -> transitiveClosure(name, EntityIndex::cascades));
+    }
+
+    /**
+     * 연관 그래프를 너비 우선으로 닫습니다.
+     *
+     * <p>재귀가 아니라 큐로 도는 이유가 두 가지입니다. 첫째, 양방향 연관과 자기 참조로 그래프에
+     * 순환이 있습니다({@code Trip.previousTrip} 이 그 예이고, pirl-spring 에는 형제끼리 부모를
+     * 경유하는 왕복이 여섯 군데 있습니다). 방문 집합으로 재방문을 막으면 엔티티 집합이 유한하므로
+     * 반드시 끝납니다. 둘째, 이 결과는 {@code ConcurrentHashMap.computeIfAbsent} 안에서
+     * 계산됩니다. 그 람다 안에서 같은 맵을 다시 갱신하면 JDK 가 재귀 갱신으로 판단해 예외를
+     * 던지거나 락을 잡고 멈춥니다. 그래서 한 번의 순회로 닫힘을 전부 계산하고, 람다 안에서
+     * {@link #associationsOf} 를 호출하지 않습니다. 같은 함정을 {@code mutatorsOf} 에서 이미
+     * 한 번 처리했습니다(그쪽은 상위 타입 조회를 람다 밖으로 뺐습니다).
+     */
+    private Set<String> transitiveClosure(String start, Predicate<FieldFacts> accept) {
+        if (!isEntity(start)) {
+            return Set.of();
+        }
+        Set<String> reached = new LinkedHashSet<>();
+        Set<String> seen = new LinkedHashSet<>();
+        Deque<String> queue = new ArrayDeque<>();
+        seen.add(start);
+        queue.add(start);
+        while (!queue.isEmpty()) {
+            String current = queue.poll();
+            for (String target : directTargets(current, accept)) {
+                if (seen.add(target)) {
+                    reached.add(target);
+                    queue.add(target);
+                }
             }
-            targets.remove(name);
-            // Set.copyOf 는 JVM 기동마다 순회 순서가 달라집니다. 삽입 순서를 보존합니다.
-            return Collections.unmodifiableSet(new LinkedHashSet<>(targets));
-        });
+        }
+        reached.remove(start);
+        // Set.copyOf 는 JVM 기동마다 순회 순서가 달라집니다. 이름 정렬로 고정합니다.
+        List<String> sorted = new ArrayList<>(reached);
+        sorted.sort(Comparator.naturalOrder());
+        return Collections.unmodifiableSet(new LinkedHashSet<>(sorted));
+    }
+
+    /** 이 엔티티가 직접 선언한(그리고 상위 타입이 선언한) 연관 대상입니다. */
+    private Set<String> directTargets(String entityInternalName, Predicate<FieldFacts> accept) {
+        Set<String> targets = new LinkedHashSet<>();
+        List<String> hierarchy = new ArrayList<>();
+        hierarchy.add(entityInternalName);
+        hierarchy.addAll(classes.supertypesOf(entityInternalName));
+        for (String current : hierarchy) {
+            classes.facts(current).ifPresent(facts -> {
+                for (FieldFacts field : facts.fields()) {
+                    if (isAssociation(field) && accept.test(field)) {
+                        targets.addAll(associationTargets(field));
+                    }
+                }
+            });
+        }
+        return targets;
+    }
+
+    /**
+     * 이 연관을 따라 부모 저장이 자식까지 쓰는지입니다.
+     *
+     * <p>{@code cascade} 에 {@code ALL}/{@code PERSIST}/{@code MERGE}/{@code REMOVE} 가 있거나
+     * {@code orphanRemoval = true} 면 참입니다. {@code REFRESH} 와 {@code DETACH} 는 영속성
+     * 컨텍스트 상태만 바꾸고 DB 에 쓰지 않으므로 제외합니다.
+     *
+     * <p>ASM 이 넘기는 형태를 실측해 확인했습니다. 단일 값
+     * ({@code cascade = CascadeType.ALL})은 {@code visitEnum} 으로 문자열 하나가 되고, 배열
+     * ({@code cascade = {PERSIST, MERGE}})은 {@code visitArray} 안의 {@code visitEnum} 으로
+     * 문자열 목록이 됩니다. {@code AnnotationValues.strings} 가 두 형태를 모두
+     * {@code List<String>} 으로 돌려줍니다.
+     *
+     * <p>{@code @Embedded} 와 {@code @ElementCollection} 은 cascade 속성이 없고, 부모를
+     * 저장하면 항상 함께 쓰입니다. 그래도 여기서 참으로 만들지 않습니다. 임베더블과
+     * 요소 컬렉션은 조회의 루트가 될 수 없어({@code @Id} 가 없으므로 리포지터리 도메인
+     * 타입도, JPQL 루트도, {@code em.find} 대상도 될 수 없습니다) {@code reads} 에 들어오는
+     * 경로가 소유 엔티티의 연관 확장뿐입니다. 즉 임베더블이 {@code reads} 에 있으면 소유
+     * 엔티티도 같이 있고, 소유 엔티티만 {@code writes} 에 있어도 교집합이 비지 않습니다.
+     * 누락을 만들지 않으므로 넣지 않습니다.
+     */
+    private static boolean cascades(FieldFacts field) {
+        for (String annotation : ASSOCIATION_ANNOTATIONS) {
+            AnnotationValues values = field.annotations().get(annotation);
+            if (values == null) {
+                continue;
+            }
+            if (values.bool("orphanRemoval", false)) {
+                return true;
+            }
+            for (String type : values.strings("cascade")) {
+                if (WRITING_CASCADE_TYPES.contains(type)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

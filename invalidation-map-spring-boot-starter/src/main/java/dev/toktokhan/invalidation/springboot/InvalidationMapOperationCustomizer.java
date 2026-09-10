@@ -156,8 +156,52 @@ public final class InvalidationMapOperationCustomizer implements GlobalOperation
         long startedAt = System.currentTimeMillis();
         InvalidationMap result = new InvalidationMapAnalyzer().analyze(program, options);
         logSummary(result, System.currentTimeMillis() - startedAt);
+        logEntitySetSizes(result, program.entities().size());
         logExcluded(program.excludedEndpoints());
         return result;
+    }
+
+    /**
+     * 엔티티 집합이 얼마나 커졌는지 남깁니다.
+     *
+     * <p>{@code reads} 는 연관을 따라 전이적으로 닫히고, {@code writes} 는 cascade 가 걸린
+     * 연관을 따라 닫힙니다. 닫힘 크기는 도메인의 연관 밀도에 달려 있습니다 — 실측한
+     * pirl-spring 은 엔티티 57개에서 최대 4개(7%)였지만, 연관이 촘촘한 도메인에서는 한
+     * 엔드포인트의 집합이 전체 엔티티에 가까워질 수 있습니다. 그렇게 되면 어떤 쓰기든 거의
+     * 모든 조회와 교집합이 생겨 사실상 전체 무효화가 됩니다. 옵션으로 미리 막지 않고 크기를
+     * 남기는 이유는, 그런 프로젝트가 실제로 있는지 먼저 알아야 정밀화 방향을 정할 수 있기
+     * 때문입니다.
+     *
+     * <p>가장 큰 집합이 전체 엔티티의 절반을 넘으면 {@code warn} 으로 올립니다. 그 지점부터는
+     * 무효화 대상을 좁혀 준다는 이 라이브러리의 목적이 사실상 사라집니다.
+     */
+    private void logEntitySetSizes(InvalidationMap result, int entityCount) {
+        if (result.byHandler().isEmpty() || entityCount == 0) {
+            return;
+        }
+        Map.Entry<MethodRef, EndpointEntities> widestReads = null;
+        Map.Entry<MethodRef, EndpointEntities> widestWrites = null;
+        for (Map.Entry<MethodRef, EndpointEntities> entry : result.byHandler().entrySet()) {
+            if (widestReads == null
+                || entry.getValue().reads().size() > widestReads.getValue().reads().size()) {
+                widestReads = entry;
+            }
+            if (widestWrites == null
+                || entry.getValue().writes().size() > widestWrites.getValue().writes().size()) {
+                widestWrites = entry;
+            }
+        }
+        int maxReads = widestReads.getValue().reads().size();
+        int maxWrites = widestWrites.getValue().writes().size();
+        String message = "invalidation-map: 엔티티 " + entityCount + "개 중 한 엔드포인트가 잡는"
+            + " 최대치는 reads " + maxReads + "개(" + widestReads.getKey() + "), writes "
+            + maxWrites + "개(" + widestWrites.getKey() + ")입니다";
+        if (Math.max(maxReads, maxWrites) * 2 > entityCount) {
+            log.warn(message + ". 전체 엔티티의 절반을 넘습니다 — 연관 확장이 무효화 범위를 "
+                + "지나치게 넓히고 있는지 확인하십시오");
+        } else {
+            log.info(message);
+        }
     }
 
     /**

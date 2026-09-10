@@ -126,6 +126,17 @@ public final class InvalidationMapAnalyzer {
         applyAnnotation(classes, handler, READS, reads);
         applyAnnotation(classes, handler, WRITES, writes);
 
+        // cascade 가 걸린 연관은 부모를 저장할 때 DB 가 자식 행까지 씁니다. 이건 추측이 아니라
+        // 매핑에 적힌 사실이므로 옵션 없이 항상 확장합니다. expandReadAssociations 로 끄지
+        // 않는 이유도 같습니다 — 이 확장을 끄면 실제로 쓰이는 엔티티가 writes 에서 빠져
+        // 조용한 누락이 됩니다(설계 문서 4.4절).
+        Set<String> expandedWrites = new TreeSet<>(writes);
+        for (String entity : writes) {
+            expandedWrites.addAll(entities.cascadingAssociationsOf(entity));
+        }
+        writes.clear();
+        writes.addAll(expandedWrites);
+
         if (options.expandReadAssociations()) {
             Set<String> expanded = new TreeSet<>(reads);
             for (String entity : reads) {
