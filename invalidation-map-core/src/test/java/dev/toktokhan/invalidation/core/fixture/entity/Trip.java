@@ -1,5 +1,6 @@
 package dev.toktokhan.invalidation.core.fixture.entity;
 
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -20,7 +21,8 @@ public class Trip extends BaseRecord {
 
     private int distance;
 
-    @OneToMany
+    /** cascade 가 걸린 연관입니다. Trip 을 저장하면 TripLeg 도 실제로 씁니다. */
+    @OneToMany(cascade = CascadeType.ALL, orphanRemoval = true)
     private List<TripLeg> legs = new ArrayList<>();
 
     @Embedded

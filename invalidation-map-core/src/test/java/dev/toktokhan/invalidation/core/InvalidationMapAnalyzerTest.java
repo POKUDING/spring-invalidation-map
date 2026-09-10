@@ -65,7 +65,9 @@ class InvalidationMapAnalyzerTest {
         EndpointEntities entities = analyze(options(false))
             .forHandler(program.ref(TripController.class, "persistViaEntityManager")).orElseThrow();
 
-        assertThat(entities.writes()).containsExactly(TRIP);
+        // LEG 은 cascade 확장 결과입니다. Trip.legs 에 cascade = ALL 이 걸려 있어
+        // Trip 을 저장하면 DB 가 TripLeg 행까지 씁니다.
+        assertThat(entities.writes()).containsExactly(TRIP, LEG);
         assertThat(entities.resolved()).isTrue();
     }
 
@@ -103,20 +105,37 @@ class InvalidationMapAnalyzerTest {
         assertThat(entities.reads()).containsExactlyInAnyOrder(TRIP, LEG, COORDINATE);
     }
 
+    /**
+     * cascade 가 걸린 연관은 {@code writes} 에도 들어갑니다. 부모를 저장할 때 DB 가 자식 행을
+     * 실제로 쓰기 때문입니다 — 추측이 아니라 매핑에 적힌 사실입니다.
+     */
     @Test
-    void analyze_writeAssociationsNotExpanded_keepsWritesNarrow() {
-        // expandReadAssociations 를 켠 상태로 확인합니다. writes 에도 잘못 적용되는 구현이라면
-        // Trip 의 연관인 TripLeg·Coordinate 가 여기 섞여 들어와 실패합니다.
+    void analyze_writeCascadingAssociations_areExpanded() {
+        EndpointEntities entities = analyze(options(false)).forHandler(renameRef()).orElseThrow();
+
+        assertThat(entities.writes()).contains(LEG);
+    }
+
+    /**
+     * cascade 가 없는 연관은 {@code writes} 에 들어가지 않습니다. {@code Trip.start} 는
+     * cascade 속성이 없는 {@code @Embedded} 라서 {@code reads} 확장에는 잡히지만
+     * {@code writes} 확장에는 잡히지 않아야 합니다. {@code writes} 확장이
+     * {@code associationsOf} 를 그대로 쓰는 구현이라면 COORDINATE 가 섞여 들어와 실패합니다.
+     */
+    @Test
+    void analyze_writeNonCascadingAssociations_areNotExpanded() {
         EndpointEntities entities = analyze(options(true)).forHandler(renameRef()).orElseThrow();
 
-        assertThat(entities.writes()).containsExactly(TRIP);
+        assertThat(entities.reads()).isEmpty();
+        assertThat(entities.writes()).containsExactly(TRIP, LEG).doesNotContain(COORDINATE);
     }
 
     @Test
     void analyze_mutatorInTransaction_reportsWrite() {
         EndpointEntities entities = analyze(options(false)).forHandler(renameRef()).orElseThrow();
 
-        assertThat(entities.writes()).containsExactly(TRIP);
+        // LEG 은 cascade 확장 결과입니다(Trip.legs 의 cascade = ALL).
+        assertThat(entities.writes()).containsExactly(TRIP, LEG);
         assertThat(entities.reads()).isEmpty();
         // writes 는 채워지고 reads 만 비어 있어도 미해결 사유가 붙으면 안 됩니다.
         assertThat(entities.resolved()).isTrue();
@@ -128,7 +147,8 @@ class InvalidationMapAnalyzerTest {
         // 워커가 발행 지점을 지나 TripEventListeners#onTripEvent 본문까지 도달해야 합니다.
         EndpointEntities entities = analyze(options(true)).forHandler(publishRef()).orElseThrow();
 
-        assertThat(entities.writes()).containsExactly(TRIP);
+        // LEG 은 cascade 확장 결과입니다(Trip.legs 의 cascade = ALL).
+        assertThat(entities.writes()).containsExactly(TRIP, LEG);
         assertThat(entities.reads()).isEmpty();
     }
 

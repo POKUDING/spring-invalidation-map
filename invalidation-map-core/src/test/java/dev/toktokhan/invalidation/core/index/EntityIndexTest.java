@@ -11,6 +11,7 @@ import dev.toktokhan.invalidation.core.fixture.entity.HTTPServer;
 import dev.toktokhan.invalidation.core.fixture.entity.Member;
 import dev.toktokhan.invalidation.core.fixture.entity.RenamedEntity;
 import dev.toktokhan.invalidation.core.fixture.entity.Trip;
+import dev.toktokhan.invalidation.core.fixture.entity.LegPoint;
 import dev.toktokhan.invalidation.core.fixture.entity.TripLeg;
 import dev.toktokhan.invalidation.core.fixture.entity.Waypoint;
 import dev.toktokhan.invalidation.core.support.FakeProgramModel;
@@ -35,6 +36,7 @@ class EntityIndexTest {
     private final EntityIndex entities = new EntityIndex(classes, new LinkedHashSet<>(List.of(
         TRIP,
         LEG,
+        MethodRefs.internalNameOf(LegPoint.class),
         MethodRefs.internalNameOf(Coordinate.class),
         MethodRefs.internalNameOf(Waypoint.class),
         MethodRefs.internalNameOf(HTTPServer.class),
@@ -99,11 +101,52 @@ class EntityIndexTest {
             MethodRefs.internalNameOf(Booking.class), "archive", "()V"))).isTrue();
     }
 
+    /**
+     * 연관 확장은 전이적입니다. 한 단계에서 자르면 응답에 실리는 손자를 놓칩니다 — pirl-spring
+     * 에서 {@code ClassInfo → ClassInfoLabel → Label} 과
+     * {@code RunningStylePhoto → User → Suspension} 이 그 모양이고, 둘 다 쓰기 엔드포인트가
+     * 있어 실제로 오래된 값이 남습니다. 전체 닫힘 비용도 실측했습니다 — 엔티티 57개에서
+     * 최대 4개(7%)로, 한 단계(최대 3개)와 사실상 같습니다.
+     */
     @Test
-    void associationsOf_collectionAndEmbeddedAssociations_reportsExactlyThoseEntities() {
+    void associationsOf_transitiveChain_reachesGrandchild() {
         assertThat(entities.associationsOf(TRIP)).containsExactlyInAnyOrder(
             MethodRefs.internalNameOf(TripLeg.class),
-            MethodRefs.internalNameOf(Coordinate.class));
+            MethodRefs.internalNameOf(Coordinate.class),
+            MethodRefs.internalNameOf(LegPoint.class));
+    }
+
+    /**
+     * {@code Trip.previousTrip} 이 자기 자신을 가리키는 {@code @ManyToOne} 이므로 순환이
+     * 존재합니다. 방문 집합이 없으면 이 호출이 끝나지 않습니다.
+     */
+    @Test
+    void associationsOf_selfReference_terminatesAndExcludesSelf() {
+        assertThat(entities.associationsOf(TRIP)).doesNotContain(TRIP);
+    }
+
+    /**
+     * cascade 확장은 {@code writes} 용입니다. cascade 가 걸린 연관만 따라가야 하고, 걸리지
+     * 않은 연관은 넣지 않습니다 — 부모를 저장해도 DB 가 그 자식을 쓰지 않기 때문입니다.
+     * 전이적으로 가는 이유는 cascade 가 JPA 규칙상 실제로 전이되기 때문입니다.
+     */
+    @Test
+    void cascadingAssociationsOf_followsOnlyCascadingAssociationsTransitively() {
+        assertThat(entities.cascadingAssociationsOf(TRIP)).containsExactlyInAnyOrder(
+            MethodRefs.internalNameOf(TripLeg.class),
+            MethodRefs.internalNameOf(LegPoint.class));
+    }
+
+    @Test
+    void cascadingAssociationsOf_associationWithoutCascade_isNotReported() {
+        assertThat(entities.cascadingAssociationsOf(TRIP))
+            .doesNotContain(MethodRefs.internalNameOf(Waypoint.class))
+            .doesNotContain(MethodRefs.internalNameOf(Coordinate.class));
+    }
+
+    @Test
+    void cascadingAssociationsOf_nonEntity_reportsNothing() {
+        assertThat(entities.cascadingAssociationsOf("java/lang/String")).isEmpty();
     }
 
     @Test
