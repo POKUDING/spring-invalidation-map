@@ -8,6 +8,7 @@ import dev.toktokhan.invalidation.core.MethodRefs;
 import dev.toktokhan.invalidation.springboot.app.DeepEntity;
 import dev.toktokhan.invalidation.springboot.app.DeepFragment;
 import dev.toktokhan.invalidation.springboot.app.Note;
+import dev.toktokhan.invalidation.springboot.app.extra.SortOrderController;
 import dev.toktokhan.invalidation.springboot.app.NoteController;
 import dev.toktokhan.invalidation.springboot.app.NoteCreatedEvent;
 import dev.toktokhan.invalidation.springboot.app.NoteEventListener;
@@ -54,8 +55,8 @@ class SpringProgramModelTest {
 
     @BeforeEach
     void setUp() {
-        model = new SpringProgramModel(context.getBeanFactory(), handlerMapping, entityManagerFactory,
-            getClass().getClassLoader());
+        model = new SpringProgramModel(context.getBeanFactory(), List.of(handlerMapping),
+            entityManagerFactory, getClass().getClassLoader(), List.of());
     }
 
     @Test
@@ -205,5 +206,46 @@ class SpringProgramModelTest {
     private static MethodRef methodRefOf(String name, Class<?>... parameterTypes) {
         Method method = ReflectionUtils.findMethod(NoteController.class, name, parameterTypes);
         return MethodRefs.of(method);
+    }
+
+    /**
+     * 액추에이터를 함께 쓰면 order 가 -100 인 ControllerEndpointHandlerMapping 이 후보에
+     * 들어오고, 그 매핑에는 핸들러가 없습니다. order 로 하나만 고르면 분석 대상이 0개가
+     * 됩니다(다운스트림 버그 리포트). 액추에이터에 의존하지 않고 같은 조건 — 핸들러가 없는
+     * 매핑이 먼저 오는 상황 — 을 만들어 확인합니다.
+     */
+    @Test
+    void endpoints_candidateMappingWithoutHandlers_stillFindsRealEndpoints() {
+        RequestMappingHandlerMapping empty = new RequestMappingHandlerMapping();
+        SpringProgramModel merged = new SpringProgramModel(context.getBeanFactory(),
+            List.of(empty, handlerMapping), entityManagerFactory, getClass().getClassLoader(),
+            List.of());
+
+        assertThat(merged.endpoints()).isNotEmpty();
+        assertThat(merged.endpoints())
+            .anySatisfy(endpoint -> assertThat(endpoint.handler().owner())
+                .isEqualTo(MethodRefs.internalNameOf(NoteController.class)));
+    }
+
+    /**
+     * base package 밖의 엔드포인트는 본문으로 내려갈 수 없어 영원히 미해결로 보고됩니다.
+     * 남의 코드라 어노테이션을 붙일 수도 없으므로 분석 대상에서 빼고, 무엇을 뺐는지는
+     * excludedEndpoints() 로 드러냅니다.
+     */
+    @Test
+    void endpoints_outsideBasePackages_isExcludedAndReported() {
+        String onlyExtra = MethodRefs.internalNameOf(SortOrderController.class)
+            .substring(0, MethodRefs.internalNameOf(SortOrderController.class).lastIndexOf('/'));
+        SpringProgramModel narrowed = new SpringProgramModel(context.getBeanFactory(),
+            List.of(handlerMapping), entityManagerFactory, getClass().getClassLoader(),
+            List.of(onlyExtra));
+
+        String noteController = MethodRefs.internalNameOf(NoteController.class);
+        assertThat(narrowed.endpoints())
+            .noneSatisfy(e -> assertThat(e.handler().owner()).isEqualTo(noteController));
+        assertThat(narrowed.excludedEndpoints())
+            .anySatisfy(e -> assertThat(e.handler().owner()).isEqualTo(noteController));
+        assertThat(narrowed.endpoints())
+            .anySatisfy(e -> assertThat(e.handler().owner()).startsWith(onlyExtra));
     }
 }

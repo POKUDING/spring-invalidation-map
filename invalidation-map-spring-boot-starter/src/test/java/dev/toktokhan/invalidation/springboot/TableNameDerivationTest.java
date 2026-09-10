@@ -119,7 +119,7 @@ class TableNameDerivationTest {
     }
 
     private SpringProgramModel model() {
-        return new SpringProgramModel(context.getBeanFactory(), handlerMapping,
-            entityManagerFactory, getClass().getClassLoader());
+        return new SpringProgramModel(context.getBeanFactory(), List.of(handlerMapping),
+            entityManagerFactory, getClass().getClassLoader(), List.of());
     }
 }
