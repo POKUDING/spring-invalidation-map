@@ -9,30 +9,28 @@ paths:
   /v1/runs:
     post:                                  # 이 write 가 바꾸는 것
       operationId: createRun
-      x-entities:
-        reads: [com.example.run.Run]
-        writes:
-          - com.example.run.Run
-          - com.example.badge.BadgeRunContribution
+      x-entities-reads: [com.example.run.Run]
+      x-entities-writes:
+        - com.example.run.Run
+        - com.example.badge.BadgeRunContribution
     get:                                   # 이 GET 이 읽는 것
       operationId: searchRuns
-      x-entities:
-        reads:
-          - com.example.run.Run
-          - com.example.run.RunPartner
+      x-entities-reads:
+        - com.example.run.Run
+        - com.example.run.RunPartner
 ```
 
-`createRun` 의 `writes` 와 `searchRuns` 의 `reads` 가 `Run` 에서 겹칩니다. 그래서 `createRun`
+`createRun` 의 `x-entities-writes` 와 `searchRuns` 의 `x-entities-reads` 가 `Run` 에서 겹칩니다. 그래서 `createRun`
 성공 뒤에는 `searchRuns` 를 다시 가져와야 합니다 — 소비자는 이 교집합만 계산하면 됩니다.
 
-`x-entities` 는 그 엔드포인트가 해당 엔티티를 건드릴 **수 있다**는 뜻입니다. 행이 실제로 바뀌었다거나
+이 확장은 그 엔드포인트가 해당 엔티티를 건드릴 **수 있다**는 뜻입니다. 행이 실제로 바뀌었다거나
 캐시에 들어 있다거나 HTTP 응답 시점에 이미 반영되어 있다는 주장은 아닙니다. 이 라이브러리는 과잉
 보고를 누락보다 우선합니다 — 과잉의 대가는 재조회 한 번이지만 누락의 대가는 화면에 남는 오래된
-값입니다. 판정할 수 없는 자리는 빈 값으로 두지 않고 `resolved: false` 로 드러냅니다.
+값입니다. 판정할 수 없는 자리는 빈 값으로 두지 않고 `x-entities-unresolved` 로 드러냅니다.
 
 프론트엔드는 write 요청이 끝나면 어떤 GET 을 다시 불러야 하는지 알아야 합니다. 그 목록은
 보통 개발자가 손으로 관리하고, 시간이 지나면 코드와 어긋납니다. 이 라이브러리는 핸들러
-메서드부터 호출 사슬을 따라가 엔드포인트별 엔티티 집합을 계산해 `x-entities` 로 노출합니다.
+메서드부터 호출 사슬을 따라가 엔드포인트별 엔티티 집합을 계산해 확장으로 노출합니다.
 코드가 바뀌면 스펙도 함께 바뀝니다.
 
 ## 동작 원리
@@ -42,7 +40,7 @@ Spring 메타데이터 ─┬─ RequestMappingHandlerMapping ─► 엔드포�
                    ├─ Repositories                 ─► 리포지토리 → 엔티티
                    └─ 빈 팩토리                     ─► 인터페이스 → 구현체
                                                             │
-핸들러 메서드 본문 ─► ASM 호출 사슬 순회 ───────────────────┼─► 엔티티 접근 ─► x-entities
+핸들러 메서드 본문 ─► ASM 호출 사슬 순회 ───────────────────┼─► 엔티티 접근 ─► 확장 키
                                                             │
                      base-packages 가 순회 범위를 정함 ─────┘
 ```
@@ -83,7 +81,7 @@ Data 프래그먼트 색인에서 구현체를 찾아 그 본문까지 방문합
 | 모듈 | 역할 |
 | --- | --- |
 | [`invalidation-map-core`](./invalidation-map-core) | 바이트코드 분석 엔진입니다. Spring 에 의존하지 않고 ASM 만 씁니다 |
-| [`invalidation-map-spring-boot-starter`](./invalidation-map-spring-boot-starter) | Spring 런타임 메타데이터로 분석을 채우고 springdoc 을 통해 `x-entities` 를 실어 보냅니다 |
+| [`invalidation-map-spring-boot-starter`](./invalidation-map-spring-boot-starter) | Spring 런타임 메타데이터로 분석을 채우고 springdoc 을 통해 확장을 실어 보냅니다 |
 
 코어는 Spring 을 모릅니다 — `ProgramModel` 인터페이스로만 환경에 묻고, 스타터가 그것을 구현합니다.
 프론트엔드 패키지는 의도적으로 두지 않았습니다. 교집합 계산은 한 줄이고, 쿼리 키 모양과 캐시
@@ -93,7 +91,7 @@ Data 프래그먼트 색인에서 구현체를 찾아 그 본문까지 방문합
 
 ```groovy
 dependencies {
-    implementation 'io.github.pokuding:invalidation-map-spring-boot-starter:0.3.0'
+    implementation 'io.github.pokuding:invalidation-map-spring-boot-starter:0.4.0'
 }
 ```
 
@@ -102,7 +100,7 @@ Spring Boot 3.x 와 4.x, JVM 17 과 21 에서 돕니다. springdoc-openapi 는 2
 클래스가 없으면 자동 설정이 조용히 매치되지 않습니다.
 
 설정은 필요하지 않습니다. springdoc-openapi 와 Spring Data JPA 가 클래스패스에 있으면 스타터가
-자동 설정을 등록하고, `/v3/api-docs` 응답에 `x-entities` 를 얹습니다. 직접 선언용 어노테이션이
+자동 설정을 등록하고, `/v3/api-docs` 응답에 확장을 얹습니다. 직접 선언용 어노테이션이
 들어 있는 `invalidation-map-core` 는 스타터가 `api` 로 전이 노출하므로 따로 추가하지 않습니다.
 
 배포 전이라면 composite build 로 물려 씁니다.
@@ -112,14 +110,21 @@ Spring Boot 3.x 와 4.x, JVM 17 과 21 에서 돕니다. springdoc-openapi 는 2
 includeBuild '/path/to/spring-invalidation-map'
 ```
 
-## x-entities 읽기
+## 확장 읽기
 
-| 키 | 내용 |
+| 확장 | 내용 |
 | --- | --- |
-| `reads` | 이 엔드포인트가 읽는 엔티티. 정렬되어 있고, 비면 키를 생략합니다 |
-| `writes` | 이 엔드포인트가 쓰는 엔티티. 같은 규칙입니다 |
-| `resolved` | 판정에 실패했을 때만 `false` 로 나타납니다 |
-| `unresolved` | 실패 사유를 사람이 읽는 문장으로 담습니다 |
+| `x-entities-reads` | 이 엔드포인트가 읽는 엔티티. 정렬되어 있고, 비면 키가 없습니다 |
+| `x-entities-writes` | 이 엔드포인트가 쓰는 엔티티. 같은 규칙입니다 |
+| `x-entities-unresolved` | 판정하지 못한 사유. 이때만 붙으므로, 이 키가 있다는 것 자체가 "이 엔드포인트는 신뢰할 수 없다"는 신호입니다 |
+
+목록을 하나의 `x-entities` 객체로 묶지 않고 확장 키로 나눕니다. Swagger UI 가 확장 값을
+`JSON.stringify(value)` 로 — 들여쓰기 없이 — 표의 칸 하나에 찍기 때문입니다. 객체로 묶으면
+한 덩어리로 나오고, 키를 나누면 라벨이 붙은 행으로 갈라집니다.
+
+`resolved` 불리언은 의도적으로 두지 않습니다. `x-entities-unresolved` 가 있다는 사실과 같은
+정보이고, Swagger UI 는 최상위 확장 값이 falsy 면 값을 버리고 `null` 을 찍어서
+`x-entities-resolved: false` 가 화면에 `null` 로 나옵니다.
 
 엔티티 이름은 FQCN 입니다. 단순 이름은 패키지가 다른 동명 엔티티에서 충돌하므로 기본값이
 아니고, `entity-naming: SIMPLE` 로 바꿀 수 있습니다.
@@ -131,25 +136,30 @@ includeBuild '/path/to/spring-invalidation-map'
 react-query 를 쓰는 소비자라면 이렇게 됩니다.
 
 ```ts
-type EntitySet = { reads?: string[]; writes?: string[]; resolved?: boolean };
-const specByOperationId: Record<string, EntitySet> = loadFromOpenApiSpec();
+type Entities = {
+  'x-entities-reads'?: string[];
+  'x-entities-writes'?: string[];
+  'x-entities-unresolved'?: string[];
+};
+const specByOperationId: Record<string, Entities> = loadFromOpenApiSpec();
+const unresolved = (e?: Entities) => (e?.['x-entities-unresolved']?.length ?? 0) > 0;
 
 function afterMutationSucceeds(mutationOperationId: string, queryClient: QueryClient) {
   const mutation = specByOperationId[mutationOperationId];
 
   // 판정에 실패한 write 는 무엇을 바꿨는지 알 수 없으므로 전부 무효화합니다.
-  if (mutation?.resolved === false) {
+  if (unresolved(mutation)) {
     queryClient.invalidateQueries();
     return;
   }
 
-  const writes = new Set(mutation?.writes ?? []);
+  const writes = new Set(mutation?.['x-entities-writes'] ?? []);
   if (writes.size === 0) return;
 
   for (const [queryKey, operationId] of registeredQueries()) {
     const query = specByOperationId[operationId];
     const intersects =
-      query?.resolved === false || (query?.reads ?? []).some((e) => writes.has(e));
+      unresolved(query) || (query?.['x-entities-reads'] ?? []).some((e) => writes.has(e));
     if (intersects) {
       queryClient.invalidateQueries({ queryKey });
     }
@@ -157,21 +167,22 @@ function afterMutationSucceeds(mutationOperationId: string, queryClient: QueryCl
 }
 ```
 
+양쪽 모두에서 `x-entities-unresolved` 를 처리하는 것이 핵심입니다. 판정하지 못한 write 는 전부
+무효화하고, 판정하지 못한 GET 은 어떤 write 뒤에도 무효화합니다. 한쪽만 처리하면 이 라이브러리가
+막으려는 누락이 다시 생깁니다.
+
 ## 판정하지 못할 때
 
-분석이 엔티티 접근을 찾지 못하면 그 엔드포인트는 빈 값이 아니라 `resolved: false` 와 사유로
-표시됩니다.
+분석이 엔티티 접근을 찾지 못하면 그 엔드포인트는 빈 값이 아니라 사유와 함께 표시됩니다.
 
 ```yaml
   /v1/slots:
     post:
-      x-entities:
-        resolved: false
-        unresolved:
-          - "엔티티 접근을 찾지 못했습니다"
+      x-entities-unresolved:
+        - "엔티티 접근을 찾지 못했습니다"
 ```
 
-`unresolved` 에 담기는 사유는 다섯 가지입니다.
+`x-entities-unresolved` 에 담기는 사유는 다섯 가지입니다.
 
 | 사유 | 뜻 |
 | --- | --- |
@@ -181,7 +192,7 @@ function afterMutationSucceeds(mutationOperationId: string, queryClient: QueryCl
 | `본문을 읽을 수 없습니다` / `클래스를 읽지 못했습니다` | 클래스 바이트를 구하지 못했습니다 |
 | `호출 사슬이 노드 예산 N 을 넘었습니다` | `node-budget` 을 넘겼습니다 |
 
-**`resolved: false` 는 보수적으로 다루십시오.** 그 GET 은 어떤 write 뒤에나 무효화 대상으로
+**`x-entities-unresolved` 가 붙은 엔드포인트는 보수적으로 다루십시오.** 그 GET 은 어떤 write 뒤에나 무효화 대상으로
 보고, 그 write 는 전체를 무효화하는 것으로 취급하십시오(이유는 「한계」 첫 항목에 있습니다).
 스타터는 첫 스펙 요청 시점에 미해결 목록을 애플리케이션 로그에도 한 번 남깁니다.
 
@@ -201,7 +212,7 @@ public PresignedUrlResponse issueUploadUrl() { ... }
 `@ReadsEntities` 와 `@WritesEntities` 는 `Class<?>[]` 를 받아 컴파일 시 검증되고 리네임에
 안전합니다. 기본은 분석 결과에 추가하는 것이고, `override = true` 를 주면 대체합니다.
 
-`@InvalidationMapIgnore` 는 그 엔드포인트를 분석에서 아예 빼서 `x-entities` 를 붙이지 않습니다.
+`@InvalidationMapIgnore` 는 그 엔드포인트를 분석에서 아예 빼서 확장을 붙이지 않습니다.
 인증, 헬스체크, 프리사인드 URL 발급처럼 엔티티를 정말 건드리지 않는 곳에 씁니다. 붙이지
 않아도 미해결로 표시되므로 안전한 결과이긴 하고, 그래서 강제하지는 않습니다.
 
@@ -213,7 +224,7 @@ public PresignedUrlResponse issueUploadUrl() { ... }
 
 | 프로퍼티 | 기본값 | 설명 |
 | --- | --- | --- |
-| `enabled` | `true` | 끄면 `x-entities` 를 붙이지 않고 분석도 하지 않습니다 |
+| `enabled` | `true` | 끄면 확장을 붙이지 않고 분석도 하지 않습니다 |
 | `base-packages` | (비어 있음) | 호출 사슬을 따라 내려갈 패키지. 비우면 `@SpringBootApplication` 의 패키지를 씁니다 |
 | `entity-naming` | `FQCN` | `FQCN` 또는 `SIMPLE` |
 | `node-budget` | `20000` | 엔드포인트 하나가 방문할 수 있는 최대 메서드 수. 넘으면 미해결로 표시됩니다 |
@@ -252,7 +263,7 @@ public PresignedUrlResponse issueUploadUrl() { ... }
 읽을 수 있습니다. 소비자 쪽에서 약간의 지연이나 재시도가 필요합니다.
 
 **MyBatis, 외부 캐시, 정적으로 해석할 수 없는 네이티브 SQL.** 이런 경로만으로 데이터를 다루는
-엔드포인트는 `resolved: false` 로 표시됩니다. 조용히 틀린 값을 내는 대신 드러납니다. 직접
+엔드포인트는 `x-entities-unresolved` 로 표시됩니다. 조용히 틀린 값을 내는 대신 드러납니다. 직접
 선언용 어노테이션으로 채우거나 보수적으로 다루십시오.
 
 **Spring Boot 3.3.5 의 프래그먼트 조회.** spring-data-commons 3.3.5 는 프래그먼트 인터페이스

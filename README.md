@@ -3,7 +3,7 @@
 [English](./README.md) | [한국어](./README.ko.md)
 
 spring-invalidation-map is a Spring Boot library that computes, from bytecode, which JPA entities each
-endpoint actually reads and writes, and publishes that as an `x-entities` extension on every OpenAPI
+endpoint actually reads and writes, and publishes that as `x-entities-*` extensions on every OpenAPI
 operation.
 
 Suppose `POST /v1/runs` creates a run and, through a commit-time event, contributes to a badge. A run
@@ -15,25 +15,23 @@ paths:
   /v1/runs:
     post:
       operationId: createRun
-      x-entities:
-        reads: [com.example.run.Run]
-        writes:
-          - com.example.run.Run
-          - com.example.badge.BadgeRunContribution
+      x-entities-reads: [com.example.run.Run]
+      x-entities-writes:
+        - com.example.run.Run
+        - com.example.badge.BadgeRunContribution
     get:
       operationId: searchRuns
-      x-entities:
-        reads:
-          - com.example.run.Run
-          - com.example.run.RunPartner
+      x-entities-reads:
+        - com.example.run.Run
+        - com.example.run.RunPartner
 ```
 
 A consumer computes `writes ∩ reads ≠ ∅` and knows `createRun` invalidates `searchRuns`.
 
-`x-entities` says an endpoint **may** touch those entities. It does not claim the rows changed, that a
+The extensions say an endpoint **may** touch those entities. It does not claim the rows changed, that a
 cache holds them, or that a write is visible by the time the HTTP response returns. The library prefers
 over-reporting to omission: one extra refetch costs a round trip, while a missed entity leaves a stale
-value on screen. Where it cannot decide, it says so with `resolved: false` instead of returning an
+value on screen. Where it cannot decide, it says so with `x-entities-unresolved` instead of returning an
 empty answer.
 
 ## How it works
@@ -43,7 +41,7 @@ Spring metadata ─┬─ RequestMappingHandlerMapping ─► endpoints
                  ├─ Repositories                 ─► repository → entity
                  └─ bean factory                 ─► interface → implementation
                                                           │
-handler method body ─► ASM call-chain walk ───────────────┼─► entity accesses ─► x-entities
+handler method body ─► ASM call-chain walk ───────────────┼─► entity accesses ─► extensions
                                                           │
                        base-packages bounds the walk ─────┘
 ```
@@ -66,7 +64,7 @@ Positions the walk cannot decide are recorded as `unresolved` with a reason, nev
 | Module | Responsibility |
 | --- | --- |
 | [`invalidation-map-core`](./invalidation-map-core) | Bytecode analysis engine. No Spring dependency; ASM only |
-| [`invalidation-map-spring-boot-starter`](./invalidation-map-spring-boot-starter) | Fills the analysis from Spring runtime metadata and injects `x-entities` through springdoc |
+| [`invalidation-map-spring-boot-starter`](./invalidation-map-spring-boot-starter) | Fills the analysis from Spring runtime metadata and injects the extensions through springdoc |
 
 The core knows nothing about Spring — it asks its environment through a `ProgramModel` interface that
 the starter implements. A frontend package is intentionally absent: the intersection is one line, and
@@ -77,14 +75,14 @@ query-key shapes, cache libraries, and transport belong to the application.
 Java 17 or newer, Spring Boot 3.x or 4.x, springdoc-openapi 2.0.0 or newer.
 
 ```groovy
-implementation 'io.github.pokuding:invalidation-map-spring-boot-starter:0.3.0'
+implementation 'io.github.pokuding:invalidation-map-spring-boot-starter:0.4.0'
 ```
 
 No configuration is required. When springdoc-openapi and Spring Data JPA are on the classpath the
-starter registers itself and `/v3/api-docs` carries `x-entities`. The annotations for declaring
+starter registers itself and `/v3/api-docs` carries the extensions. The annotations for declaring
 entities by hand live in `invalidation-map-core`, which the starter exposes transitively.
 
-To see `x-entities` in the Swagger UI, enable extension display. springdoc leaves this unset, so
+To see the extensions in the Swagger UI, enable extension display. springdoc leaves this unset, so
 Swagger UI's own default hides vendor extensions; the JSON carries them either way.
 
 ```yaml
@@ -93,14 +91,21 @@ springdoc:
     show-extensions: true
 ```
 
-## Reading x-entities
+## Reading the extensions
 
-| Key | Meaning |
+| Extension | Meaning |
 | --- | --- |
-| `reads` | Entities this endpoint reads. Sorted; the key is omitted when empty |
-| `writes` | Entities this endpoint writes. Same rule |
-| `resolved` | Present as `false` only when the analysis could not decide |
-| `unresolved` | Human-readable reasons for that failure |
+| `x-entities-reads` | Entities this endpoint reads. Sorted; the key is absent when empty |
+| `x-entities-writes` | Entities this endpoint writes. Same rule |
+| `x-entities-unresolved` | Reasons the analysis could not decide. Present only then, so its presence *is* the "do not trust this endpoint" signal |
+
+Each list is its own operation-level extension rather than one `x-entities` object. Swagger UI prints an
+extension value with `JSON.stringify(value)` — no indentation — into a table cell, so a single object
+arrives as one dense line. Separate keys arrive as separate labelled rows.
+
+There is deliberately no `resolved` boolean. It would carry exactly the information that
+`x-entities-unresolved` already carries by being present, and Swagger UI replaces any falsy top-level
+extension value with `null`, so `x-entities-resolved: false` renders as `null` on screen.
 
 Entity names are fully qualified. Simple names collide across packages, so they are not the default;
 `entity-naming: SIMPLE` switches to them.
@@ -112,25 +117,30 @@ would insert it into the list of every write that reads it, burying the real cha
 A react-query consumer looks like this.
 
 ```ts
-type EntitySet = { reads?: string[]; writes?: string[]; resolved?: boolean };
-const specByOperationId: Record<string, EntitySet> = loadFromOpenApiSpec();
+type Entities = {
+  'x-entities-reads'?: string[];
+  'x-entities-writes'?: string[];
+  'x-entities-unresolved'?: string[];
+};
+const specByOperationId: Record<string, Entities> = loadFromOpenApiSpec();
+const unresolved = (e?: Entities) => (e?.['x-entities-unresolved']?.length ?? 0) > 0;
 
 function afterMutationSucceeds(mutationOperationId: string, queryClient: QueryClient) {
   const mutation = specByOperationId[mutationOperationId];
 
   // An unresolved write could have changed anything, so invalidate everything.
-  if (mutation?.resolved === false) {
+  if (unresolved(mutation)) {
     queryClient.invalidateQueries();
     return;
   }
 
-  const writes = new Set(mutation?.writes ?? []);
+  const writes = new Set(mutation?.['x-entities-writes'] ?? []);
   if (writes.size === 0) return;
 
   for (const [queryKey, operationId] of registeredQueries()) {
     const query = specByOperationId[operationId];
     const intersects =
-      query?.resolved === false || (query?.reads ?? []).some((e) => writes.has(e));
+      unresolved(query) || (query?.['x-entities-reads'] ?? []).some((e) => writes.has(e));
     if (intersects) {
       queryClient.invalidateQueries({ queryKey });
     }
@@ -138,7 +148,7 @@ function afterMutationSucceeds(mutationOperationId: string, queryClient: QueryCl
 }
 ```
 
-Handling `resolved === false` on **both** sides is the point. An unresolved write invalidates
+Handling `x-entities-unresolved` on **both** sides is the point. An unresolved write invalidates
 everything; an unresolved query is invalidated after any write. Handling one side only reintroduces the
 omission this library exists to prevent.
 
@@ -149,10 +159,8 @@ An endpoint the analysis could not resolve is reported explicitly rather than le
 ```yaml
   /v1/slots:
     post:
-      x-entities:
-        resolved: false
-        unresolved:
-          - "엔티티 접근을 찾지 못했습니다"
+      x-entities-unresolved:
+        - "엔티티 접근을 찾지 못했습니다"
 ```
 
 Reasons are written in Korean. There are five.
@@ -183,7 +191,7 @@ public PresignedUrlResponse issueUploadUrl() { ... }
 `@ReadsEntities` and `@WritesEntities` take `Class<?>[]`, so they are checked at compile time and
 survive renames. They add to the analysis result; `override = true` replaces it.
 
-`@InvalidationMapIgnore` removes the endpoint from analysis entirely, so no `x-entities` is attached.
+`@InvalidationMapIgnore` removes the endpoint from analysis entirely, so no extension is attached.
 Use it where an endpoint genuinely touches no entity — authentication, health checks, presigned URL
 issuance. Without it such an endpoint is reported unresolved, which is already a safe outcome, so the
 annotation is not required.
@@ -230,7 +238,7 @@ read, inside `base-packages`.
 
 Outside that boundary: MyBatis, `JdbcTemplate`, the JPA Criteria API, external caches, and native SQL
 that cannot be resolved statically. An endpoint that touches data only through those paths is reported
-`resolved: false` rather than silently wrong.
+`x-entities-unresolved` rather than silently wrong.
 
 **Synchronous and asynchronous writes are not distinguished.** An entity reached only through `@Async`
 or `@TransactionalEventListener(phase = AFTER_COMMIT)` still appears in `writes`, but the output does
