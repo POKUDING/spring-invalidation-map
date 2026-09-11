@@ -8,7 +8,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * {@code x-entities} 의 정렬 계약을 검증하기 위한 전용 엔드포인트입니다. {@link AlphaEntity}
+ * {@code x-entities-reads} 의 정렬 계약을 검증하기 위한 전용 엔드포인트입니다. {@link AlphaEntity}
  * javadoc 에 적은 이유로, 정렬 유무가 실제로 관찰 가능하려면 서로 다른 패키지의, 연관이 없는
  * 엔티티 조합이 필요합니다.
  */

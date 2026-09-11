@@ -76,7 +76,7 @@ public class QuerydslRepository {
      * {@code jpaQueryFactory.selectFrom(classInfo).leftJoin(classInfo.classPhotoList)
      * .fetchJoin().where(...)} 처럼 정적 인스턴스만 참조하는 코드가 지금까지의 픽스처
      * ({@link #selectFrom()}, {@code new QTrip()} 관용구)로는 재현되지 않아 엔티티 접근을
-     * 통째로 놓쳤습니다({@code resolved: false}). {@link QuerydslResolver} 가
+     * 통째로 놓쳤습니다(미해결로 표시). {@link QuerydslResolver} 가
      * {@code referencedFieldOwners()} 도 함께 보도록 고친 뒤에는 이 메서드로도 {@code Trip}
      * 을 찾습니다.
      */

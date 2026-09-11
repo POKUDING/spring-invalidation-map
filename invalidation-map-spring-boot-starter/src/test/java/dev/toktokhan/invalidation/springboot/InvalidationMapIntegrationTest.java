@@ -7,6 +7,7 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.toktokhan.invalidation.springboot.app.Note;
+import dev.toktokhan.invalidation.springboot.app.NoteAudit;
 import dev.toktokhan.invalidation.springboot.app.NoteMetadata;
 import dev.toktokhan.invalidation.springboot.app.NoteTag;
 import dev.toktokhan.invalidation.springboot.app.SlotInstance;
@@ -29,7 +30,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 
 /**
- * {@code /v3/api-docs} 응답에 {@code x-entities} 확장이 실제로 실리는지 확인하는 종단 테스트입니다.
+ * {@code /v3/api-docs} 응답에 {@code x-entities-*} 확장이 실제로 실리는지 확인하는 종단 테스트입니다.
  *
  * <p>HTTP 호출에 {@code TestRestTemplate} 이나 {@code @AutoConfigureMockMvc}(MockMvc) 를 쓰지
  * 않고 JDK 표준 {@link HttpClient} 를 직접 씁니다. 둘 다 Boot 4 에서 이 스타터가 테스트에서
@@ -60,50 +61,66 @@ class InvalidationMapIntegrationTest {
 
     @Test
     void apiDocs_getEndpoint_hasReadsExtension() throws Exception {
-        JsonNode reads = apiDocs(port).at("/paths/~1notes/get/x-entities/reads");
+        JsonNode reads = apiDocs(port).at("/paths/~1notes/get/x-entities-reads");
 
         assertThat(toList(reads)).contains(NOTE_FQCN);
     }
 
     @Test
     void apiDocs_getEndpoint_readsIncludeAssociatedEntity() throws Exception {
-        JsonNode reads = apiDocs(port).at("/paths/~1notes/get/x-entities/reads");
+        JsonNode reads = apiDocs(port).at("/paths/~1notes/get/x-entities-reads");
 
         assertThat(toList(reads)).contains(NOTE_TAG_FQCN);
     }
 
     @Test
     void apiDocs_postEndpoint_hasWritesExtension() throws Exception {
-        JsonNode writes = apiDocs(port).at("/paths/~1notes/post/x-entities/writes");
+        JsonNode writes = apiDocs(port).at("/paths/~1notes/post/x-entities-writes");
 
         assertThat(toList(writes)).contains(NOTE_FQCN);
     }
 
     /**
-     * {@code NoteTag} 는 {@code NoteEventListener} 가 {@code NoteCreatedEvent} 를 받아 저장합니다.
-     * 리스너를 지우면(또는 이벤트 발행 자체를 지우면) 이 엔드포인트의 writes 에서 사라져야만
-     * 이 테스트가 리스너 경로를 실제로 검증하는 것입니다 — {@code Note} 의 {@code @OneToMany}
-     * 연관 확장으로 우연히 들어온 것이 아닙니다. 연관 확장은 {@code expandReadAssociations} 로
-     * reads 에만 적용되고 writes 에는 적용되지 않으므로(핵심 애널라이저의 설계), 애초에
-     * writes 에 NoteTag 가 들어올 수 있는 경로는 이 리스너뿐입니다.
+     * {@code NoteAudit} 은 {@code NoteEventListener} 가 {@code NoteCreatedEvent} 를 받아
+     * 저장합니다. 리스너를 지우면(또는 이벤트 발행 자체를 지우면) 이 엔드포인트의
+     * {@code writes} 에서 사라져야만 이 테스트가 리스너 경로를 검증하는 것입니다.
+     *
+     * <p>이 단정이 {@code NoteTag} 였을 때는 그게 성립하지 않았습니다. {@code Note.tags} 에
+     * {@code cascade = ALL} 이 걸려 있어 {@code Note} 쓰기만으로 {@code NoteTag} 가
+     * {@code writes} 에 들어오기 때문입니다 — 리스너 본문의 저장을 지우고 돌려도 통합 테스트
+     * 14개가 전부 통과했습니다. {@code NoteAudit} 은 어떤 연관으로도 {@code Note} 와 닿지
+     * 않아 리스너 경로만이 유일한 쓰기 경로입니다.
      */
     @Test
     void apiDocs_postEndpoint_writesIncludeEventListenerEntity() throws Exception {
-        JsonNode writes = apiDocs(port).at("/paths/~1notes/post/x-entities/writes");
+        JsonNode writes = apiDocs(port).at("/paths/~1notes/post/x-entities-writes");
+
+        assertThat(toList(writes)).contains(NoteAudit.class.getName());
+    }
+
+    /**
+     * cascade 가 걸린 연관은 {@code writes} 에 실립니다. {@code PUT /notes/{id}} 는
+     * {@code Note} 만 더티 체킹으로 바꾸고 이벤트도 발행하지 않는데, {@code Note.tags} 의
+     * {@code cascade = ALL} 때문에 {@code Note} 를 저장하면 DB 가 {@code NoteTag} 행까지
+     * 씁니다. cascade 확장을 지우면 이 단정이 깨집니다.
+     */
+    @Test
+    void apiDocs_putEndpoint_writesIncludeCascadingAssociation() throws Exception {
+        JsonNode writes = apiDocs(port).at("/paths/~1notes~1{id}/put/x-entities-writes");
 
         assertThat(toList(writes)).contains(NOTE_TAG_FQCN);
     }
 
     @Test
     void apiDocs_putEndpoint_dirtyCheckMutatorIsWrite() throws Exception {
-        JsonNode writes = apiDocs(port).at("/paths/~1notes~1{id}/put/x-entities/writes");
+        JsonNode writes = apiDocs(port).at("/paths/~1notes~1{id}/put/x-entities-writes");
 
         assertThat(toList(writes)).contains(NOTE_FQCN);
     }
 
     @Test
     void apiDocs_fragmentNativeSql_resolvesEntity() throws Exception {
-        JsonNode writes = apiDocs(port).at("/paths/~1notes~1{id}~1upsert/put/x-entities/writes");
+        JsonNode writes = apiDocs(port).at("/paths/~1notes~1{id}~1upsert/put/x-entities-writes");
 
         assertThat(toList(writes)).contains(NOTE_FQCN);
     }
@@ -111,33 +128,37 @@ class InvalidationMapIntegrationTest {
     /**
      * {@code /notes/health} 는 {@code @InvalidationMapIgnore} 가 붙어 있어 분석 대상에서
      * 완전히 빠집니다. 대조군인 {@code /notes/ping} (아래 참고)은 어노테이션 없이도 접근을
-     * 찾지 못하면 {@code x-entities} 가 붙되 {@code resolved: false} 로 붙습니다 — 그러니
-     * "확장이 없다"는 이 단정이 지키는 것은 정말로 무시 어노테이션이지, 접근을 못 찾은
-     * 결과가 아닙니다.
+     * 찾지 못하면 {@code x-entities-unresolved} 가 붙습니다 — 그러니 "확장이 하나도 없다"는
+     * 이 단정이 지키는 것은 정말로 무시 어노테이션이지, 접근을 못 찾은 결과가 아닙니다.
      */
     @Test
     void apiDocs_ignoredEndpoint_hasNoExtension() throws Exception {
-        JsonNode extension = apiDocs(port).at("/paths/~1notes~1health/get/x-entities");
+        JsonNode operation = apiDocs(port).at("/paths/~1notes~1health/get");
 
-        assertThat(extension.isMissingNode()).isTrue();
+        assertThat(operation.isMissingNode()).isFalse();
+        assertThat(operation.at("/x-entities-reads").isMissingNode()).isTrue();
+        assertThat(operation.at("/x-entities-writes").isMissingNode()).isTrue();
+        assertThat(operation.at("/x-entities-unresolved").isMissingNode()).isTrue();
     }
 
     /**
-     * {@code resolved} 키는 해결된 엔드포인트에는 없어야 하고, 미해결 엔드포인트에는
-     * {@code false} 로 실제로 실려야 합니다. 후자를 확인하지 않으면 {@code resolved} 키를
-     * 아예 쓰지 않는 구현도 이 테스트를 통과합니다.
+     * {@code x-entities-unresolved} 는 판정한 엔드포인트에는 없어야 하고, 판정하지 못한
+     * 엔드포인트에는 사유와 함께 실려야 합니다. 소비자가 신뢰 여부를 판단하는 근거가 이 키
+     * 하나이므로 양쪽을 다 확인합니다 — 한쪽만 보면 이 키를 아예 쓰지 않는 구현이나 모든
+     * 엔드포인트에 붙이는 구현이 통과합니다.
+     *
+     * <p>{@code resolved} 불리언 키는 두지 않습니다. 이 키의 존재 여부와 같은 말이고, Swagger
+     * UI 가 최상위 확장의 falsy 값을 {@code null} 로 찍기 때문입니다.
      */
     @Test
-    void apiDocs_resolvedTrue_isOmitted() throws Exception {
+    void apiDocs_unresolvedKey_onlyOnUnresolvedEndpoints() throws Exception {
         JsonNode docs = apiDocs(port);
 
-        JsonNode resolvedExtension = docs.at("/paths/~1notes/get/x-entities");
-        assertThat(resolvedExtension.has("resolved")).isFalse();
+        assertThat(docs.at("/paths/~1notes/get/x-entities-unresolved").isMissingNode()).isTrue();
 
-        JsonNode unresolvedExtension = docs.at("/paths/~1notes~1ping/get/x-entities");
-        assertThat(unresolvedExtension.isMissingNode()).isFalse();
-        assertThat(unresolvedExtension.get("resolved").asBoolean()).isFalse();
-        assertThat(toList(unresolvedExtension.get("unresolved"))).isNotEmpty();
+        JsonNode unresolved = docs.at("/paths/~1notes~1ping/get/x-entities-unresolved");
+        assertThat(unresolved.isMissingNode()).isFalse();
+        assertThat(toList(unresolved)).isNotEmpty();
     }
 
     /**
@@ -155,21 +176,21 @@ class InvalidationMapIntegrationTest {
      */
     @Test
     void apiDocs_legacyFragmentWriteWithResolvedRead_isNotSilentlyDropped() throws Exception {
-        JsonNode extension = apiDocs(port).at("/paths/~1legacy-fragment-mix~1{id}/put/x-entities");
+        JsonNode operation = apiDocs(port).at("/paths/~1legacy-fragment-mix~1{id}/put");
 
-        assertThat(extension.isMissingNode()).isFalse();
-        assertThat(toList(extension.path("writes"))).contains(SlotInstance.class.getName());
-        assertThat(toList(extension.path("reads"))).contains(AlphaEntity.class.getName());
+        assertThat(operation.isMissingNode()).isFalse();
+        assertThat(toList(operation.at("/x-entities-writes"))).contains(SlotInstance.class.getName());
+        assertThat(toList(operation.at("/x-entities-reads"))).contains(AlphaEntity.class.getName());
     }
 
     @Test
     void apiDocs_multiPathHandler_sharesSameExtension() throws Exception {
         JsonNode docs = apiDocs(port);
-        JsonNode multiA = docs.at("/paths/~1notes~1multi-a/get/x-entities");
-        JsonNode multiB = docs.at("/paths/~1notes~1multi-b/get/x-entities");
+        JsonNode multiA = docs.at("/paths/~1notes~1multi-a/get/x-entities-reads");
+        JsonNode multiB = docs.at("/paths/~1notes~1multi-b/get/x-entities-reads");
 
         assertThat(multiA.isMissingNode()).isFalse();
-        assertThat(toList(multiA.path("reads"))).contains(NOTE_FQCN);
+        assertThat(toList(multiA)).contains(NOTE_FQCN);
         assertThat(multiA).isEqualTo(multiB);
     }
 
@@ -229,7 +250,7 @@ class InvalidationMapIntegrationTest {
 
         @Test
         void apiDocs_entityNamingSimple_usesSimpleNames() throws Exception {
-            JsonNode reads = apiDocs(port).at("/paths/~1notes/get/x-entities/reads");
+            JsonNode reads = apiDocs(port).at("/paths/~1notes/get/x-entities-reads");
 
             // Note 는 @OneToMany(NoteTag), @Embedded(NoteMetadata) 연관을 한 단계 확장한
             // 결과까지 포함합니다. 세 이름 모두 같은 패키지라 알파벳 순서가 그대로입니다.
@@ -256,7 +277,7 @@ class InvalidationMapIntegrationTest {
          */
         @Test
         void apiDocs_extensionListsAreSorted_isStable() throws Exception {
-            JsonNode reads = apiDocs(port).at("/paths/~1sort-check/get/x-entities/reads");
+            JsonNode reads = apiDocs(port).at("/paths/~1sort-check/get/x-entities-reads");
 
             assertThat(toList(reads)).containsExactly(
                 AlphaEntity.class.getSimpleName(), SlotInstance.class.getSimpleName());
@@ -264,7 +285,7 @@ class InvalidationMapIntegrationTest {
     }
 
     /**
-     * {@code springdoc.group-configs} 로 API 를 여러 그룹으로 나눴을 때도 {@code x-entities} 가
+     * {@code springdoc.group-configs} 로 API 를 여러 그룹으로 나눴을 때도 확장이
      * 그룹별 스펙({@code /v3/api-docs/{group}})에 실리는지 검증합니다.
      *
      * <p>재현: pirl-spring(Task 12, user/admin/internal 세 그룹)에서 그룹 없는
@@ -274,7 +295,7 @@ class InvalidationMapIntegrationTest {
      * {@code GroupedOpenApi} 빈을 직접 등록해 같은 상황을 픽스처로 재현합니다.
      *
      * <p>{@link InvalidationMapOperationCustomizer} 가 평범한 {@code OperationCustomizer} 를
-     * 구현했을 때는 이 테스트가 실패했습니다({@code /v3/api-docs/notes} 의 {@code x-entities} 가
+     * 구현했을 때는 이 테스트가 실패했습니다({@code /v3/api-docs/notes} 의 확장이
      * 비어 있었습니다) — springdoc 이 그룹별 스펙에는 {@code GlobalOperationCustomizer} 만
      * 공통 적용하기 때문입니다(클래스 javadoc 참고). {@code GlobalOperationCustomizer} 로
      * 바꾼 뒤에는 통과합니다.
@@ -301,7 +322,7 @@ class InvalidationMapIntegrationTest {
 
         @Test
         void apiDocs_groupedEndpoint_hasEntitiesExtension() throws Exception {
-            JsonNode reads = apiDocs(port, "/v3/api-docs/notes").at("/paths/~1notes/get/x-entities/reads");
+            JsonNode reads = apiDocs(port, "/v3/api-docs/notes").at("/paths/~1notes/get/x-entities-reads");
 
             assertThat(toList(reads)).contains(NOTE_FQCN);
         }
