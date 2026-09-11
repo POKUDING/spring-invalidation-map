@@ -9,7 +9,6 @@ import dev.toktokhan.invalidation.core.MethodRef;
 import dev.toktokhan.invalidation.core.MethodRefs;
 import io.swagger.v3.oas.models.Operation;
 import jakarta.persistence.EntityManagerFactory;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -27,7 +26,7 @@ import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 /**
- * 분석 결과를 OpenAPI 오퍼레이션의 {@code x-entities} 확장으로 붙입니다.
+ * 분석 결과를 OpenAPI 오퍼레이션의 {@code x-entities-*} 확장으로 붙입니다.
  *
  * <p>분석은 첫 스펙 요청 때 한 번만 합니다. 부팅 시간이 늘지 않고, Swagger 를 열지 않는
  * 환경에서는 아예 돌지 않습니다.
@@ -47,7 +46,7 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
  * 세 그룹 운용)에 실제로 붙여 확인했습니다(Task 12). 이 클래스 자신의 분석 완료 로그
  * 기준 엔드포인트는 219개입니다(설계 문서가 계획 단계에서 쓴 211개와는 다른 수치입니다
  * — 그 값은 이 실측이 아니라 별도 측정입니다). 그룹이 없는 {@code /v3/api-docs} 에는
- * 170개 경로 전부에 {@code x-entities} 가 실렸지만, {@code /v3/api-docs/user} 와
+ * 170개 경로 전부에 확장이 실렸지만, {@code /v3/api-docs/user} 와
  * {@code /v3/api-docs/admin} 에는 하나도 실리지 않았습니다 — 이 라이브러리의 픽스처는
  * 그룹을 쓰지 않아 Task 10, 11 어느 리뷰에서도 이 경로가 드러나지 않았습니다. 그룹을
  * 나누는 실제 프로젝트에서는 이 빠짐이 매 요청마다 재발했을 것이므로(픽스처가 아니라 실제
@@ -58,7 +57,34 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 public final class InvalidationMapOperationCustomizer implements GlobalOperationCustomizer {
 
     private static final Log log = LogFactory.getLog(InvalidationMapOperationCustomizer.class);
-    private static final String EXTENSION = "x-entities";
+    /**
+     * 확장 키를 목록마다 하나씩 나눕니다.
+     *
+     * <p>한 키({@code x-entities}) 아래 객체로 묶으면 Swagger UI 에서 읽기 어렵습니다. UI 는
+     * 확장 값을 {@code JSON.stringify(value)} 로 한 줄에 찍는데(swagger-ui 5.13.0 의
+     * {@code operation_extension_row}, 들여쓰기 인자가 없습니다), 그러면
+     * {@code {"reads":[...],"writes":[...]}} 한 덩어리가 됩니다. 키를 나누면 표에
+     * {@code x-entities-reads} / {@code x-entities-writes} 라벨이 붙은 행으로 갈라져
+     * 무엇이 무엇인지 바로 보입니다. 실측으로 확인했습니다.
+     *
+     * <p>값의 줄바꿈은 이렇게 해도 해결되지 않습니다. 같은 실측에서 FQCN 목록은 나눠도
+     * 창 너비 900px 을 넘었습니다(1277px → 1219px). 그건 표시 쪽 문제라
+     * {@code entity-naming: SIMPLE} 이나 Swagger UI 의 CSS 로 다뤄야 합니다.
+     */
+    private static final String READS = "x-entities-reads";
+    private static final String WRITES = "x-entities-writes";
+
+    /**
+     * 판정하지 못한 자리의 사유입니다. 이 키가 있으면 그 엔드포인트는 신뢰할 수 없습니다.
+     *
+     * <p>{@code resolved} 플래그는 두지 않습니다. 이유가 둘입니다. 첫째,
+     * {@code EndpointEntities.resolved()} 가 {@code unresolved.isEmpty()} 그 자체라 이 키의
+     * 존재 여부와 같은 말입니다. 둘째, Swagger UI 는 최상위 확장 값이 falsy 면 값을 버리고
+     * {@code null} 을 찍습니다({@code const u = xVal ? ... : null}). 즉
+     * {@code x-entities-resolved: false} 는 화면에 {@code null} 로 나옵니다 — 실측으로
+     * 확인했습니다.
+     */
+    private static final String UNRESOLVED = "x-entities-unresolved";
 
     private final ConfigurableListableBeanFactory beanFactory;
     private final ObjectProvider<RequestMappingHandlerMapping> handlerMappings;
@@ -100,20 +126,16 @@ public final class InvalidationMapOperationCustomizer implements GlobalOperation
     }
 
     private void apply(Operation operation, EndpointEntities entities) {
-        Map<String, Object> extension = new LinkedHashMap<>();
+        // 빈 목록은 키 자체를 넣지 않습니다. 빈 배열을 실으면 스펙만 커지고, 소비자는 어차피
+        // 키가 없는 경우를 처리해야 합니다.
         if (!entities.reads().isEmpty()) {
-            extension.put("reads", names(entities.reads()));
+            operation.addExtension(READS, names(entities.reads()));
         }
         if (!entities.writes().isEmpty()) {
-            extension.put("writes", names(entities.writes()));
+            operation.addExtension(WRITES, names(entities.writes()));
         }
         if (!entities.resolved()) {
-            // resolved 는 false 일 때만 넣습니다. true 를 전부 넣으면 스펙만 커집니다.
-            extension.put("resolved", false);
-            extension.put("unresolved", entities.unresolved());
-        }
-        if (!extension.isEmpty()) {
-            operation.addExtension(EXTENSION, extension);
+            operation.addExtension(UNRESOLVED, entities.unresolved());
         }
     }
 
@@ -209,7 +231,7 @@ public final class InvalidationMapOperationCustomizer implements GlobalOperation
      *
      * <p>springdoc 이나 Spring 의 기본 컨트롤러가 여기 걸리는 것은 정상입니다. 그러나
      * {@code base-packages} 를 잘못 좁히면 실제 엔드포인트도 여기로 빠지고, 그러면 그
-     * 엔드포인트에는 {@code x-entities} 가 붙지 않아 소비자가 무효화를 하지 않습니다.
+     * 엔드포인트에는 확장이 붙지 않아 소비자가 무효화를 하지 않습니다.
      * 조용히 빠지지 않도록 개수와 목록을 남깁니다.
      */
     private void logExcluded(List<Endpoint> excluded) {
